@@ -12,6 +12,7 @@ class Permission(str, Enum):
     VIEW_DEFICIT = "view_deficit"
     DOWNLOAD_REPORTS = "download_reports"
     MANAGE_USERS = "manage_users"
+    MARK_ATTENDANCE = "mark_attendance"
 
 
 # Rollar tartibi (ro'yxatlarda shu tartibda ko'rsatiladi)
@@ -24,6 +25,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.VIEW_DEFICIT,
         Permission.DOWNLOAD_REPORTS,
         Permission.MANAGE_USERS,
+        Permission.MARK_ATTENDANCE,
     }),
     Role.BOSS: frozenset({
         Permission.VIEW_DEFICIT,
@@ -32,6 +34,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.STOREKEEPER: frozenset({
         Permission.VIEW_DEFICIT,
         Permission.DOWNLOAD_REPORTS,
+        Permission.MARK_ATTENDANCE,
     }),
     Role.WORKER: frozenset({
         Permission.VIEW_DEFICIT,

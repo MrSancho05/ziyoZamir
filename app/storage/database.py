@@ -13,7 +13,14 @@ CREATE TABLE IF NOT EXISTS users (
     lang       TEXT NOT NULL DEFAULT 'uz',
     status     TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
+);
+
+CREATE TABLE IF NOT EXISTS report_log (
+    kind       TEXT NOT NULL,
+    period_key TEXT NOT NULL,
+    sent_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (kind, period_key)
+);
 """
 
 
@@ -27,7 +34,7 @@ class Database:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute(SCHEMA)
+            self._conn.executescript(SCHEMA)
             self._conn.commit()
 
     def _run(self, sql: str, params: Sequence[Any], mode: str) -> Any:

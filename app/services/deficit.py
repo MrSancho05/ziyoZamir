@@ -33,7 +33,9 @@ def _parse_row(row: dict[str, Any]) -> DeficitItem | None:
         return None
 
     name = str(row.get(COL_NAME, "")).strip() or "Noma'lum"
-    return DeficitItem(name=name, stock=stock, norm=norm)
+    # Manfiy qiymat (masalan -995) skladda bo'lishi mantiqsiz: ko'rsatishda 0 qilinadi.
+    # Tanqis ekanligi esa asl qiymat bo'yicha aniqlangan (yuqorida).
+    return DeficitItem(name=name, stock=max(stock, 0.0), norm=max(norm, 0.0))
 
 
 async def load_deficit_items(sheets: SheetsClient) -> list[DeficitItem]:

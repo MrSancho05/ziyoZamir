@@ -67,6 +67,41 @@ TEXTS: dict[str, dict[str, str]] = {
         "access_revoked_user": "🚫 Botdan foydalanish huquqingiz bekor qilindi.",
         "pending_notice": "🆕 Tasdiqlash kutayotgan so'rovlar: <b>{count}</b>",
         "btn_review": "👀 Ko'rib chiqish",
+        "unknown_command": "🤔 Buyruq tushunilmadi yoki bu amal hozirgi rolingiz uchun mavjud emas.\nMenyu yangilandi, quyidagi tugmalardan foydalaning.",
+        # --- yo'qlama ---
+        "btn_attendance": "📝 Yo'qlama",
+        "att_title": "📝 <b>Yo'qlama — {date}</b>\n\nIshchi ustiga bosing: ⬜ → ✅ keldi → ❌ sababsiz kelmadi → 🟡 sababli kelmadi.\n\n✅ {came}   ❌ {absent}   🟡 {excused}   ⬜ {unmarked}{note}",
+        "att_existing_note": "\n\nℹ️ Bugungi yo'qlama jadvalda bor, o'zgartirishingiz mumkin.",
+        "att_btn_all": "✅ Hammasi keldi",
+        "att_btn_start": "📝 Yo'qlamani boshlash",
+        "att_btn_edit": "✏️ O'zgartirish",
+        "att_weekend": "🏖 Bugun dam olish kuni ({weekday}).\nYo'qlama faqat ish kunlarida (dushanba–juma) olinadi.",
+        "att_reminder": "⏰ <b>Eslatma</b>\n\nBugungi ({date}) yo'qlama hali o'tkazilmagan.",
+        "att_btn_save": "💾 Saqlash",
+        "att_not_all": "⚠️ Hali {count} ta ishchi belgilanmagan.",
+        "att_saved": "✅ <b>Yo'qlama saqlandi — {date}</b>\n\n✅ Kelganlar: <b>{came}</b>\n❌ Sababsiz kelmaganlar: <b>{absent}</b>\n🟡 Sababli kelmaganlar: <b>{excused}</b>\n\nHisobotni bossga yuboring:",
+        "att_btn_send": "📤 Bossga yuborish",
+        "att_sent": "✅ <b>Yo'qlama saqlandi — {date}</b>\n📤 Hisobot {count} ta bossga yuborildi.",
+        "att_no_boss": "⚠️ Hisobotni yuborib bo'lmadi: tizimda boss yo'q yoki u botga /start bosmagan.",
+        "att_already_sent": "Hisobot allaqachon yuborilgan.",
+        "att_no_workers": "⚠️ Jadvalda ishchilar topilmadi (A ustuni, 3-qatordan boshlab).",
+        "att_no_template": "⚠️ Yo'qlama varag'i topilmadi: «{tab}».\nHozirgi oy varag'ining nomini shunga o'zgartiring.",
+        "att_layout_error": "⚠️ Jadval tuzilishi mos kelmadi: kun raqamlari 2-qatorda bo'lishi kerak.",
+        "att_sheet_changed": "⚠️ Jadvaldagi ishchilar ro'yxati o'zgargan. Yo'qlamani qaytadan oching.",
+        "rep_daily_title": "📋 <b>Kunlik yo'qlama — {date}</b>",
+        "rep_by": "✍️ Yo'qlamani oldi: {name}",
+        "rep_came": "✅ Kelganlar: <b>{n}</b>",
+        "rep_absent": "❌ Kelmaganlar: <b>{n}</b> (🟡 sababli: {excused}, ❌ sababsiz: {unexcused})",
+        "rep_came_list": "✅ <b>Kelganlar ro'yxati:</b>",
+        "rep_unexcused_list": "❌ <b>Sababsiz kelmaganlar:</b>",
+        "rep_excused_list": "🟡 <b>Sababli kelmaganlar:</b>",
+        "rep_nobody": "—",
+        "rep_weekly_title": "📊 <b>Haftalik hisobot</b>\n{start} — {end}",
+        "rep_monthly_title": "📅 <b>Oylik hisobot — {month} {year}</b>",
+        "rep_recorded_days": "Ish kunlari: <b>{work}</b> · yo'qlama olingan: <b>{n}</b>",
+        "rep_legend": "✅ keldi · 🟡 sababli · ❌ sababsiz · ⬜ belgilanmagan",
+        "rep_no_data": "Bu davr uchun yo'qlama ma'lumoti topilmadi.",
+        "rep_missing_tab": "⚠️ Varaq topilmadi: {tab}",
     },
     "ru": {
         "choose_language": "Iltimos, tilni tanlang / Пожалуйста, выберите язык:",
@@ -132,6 +167,41 @@ TEXTS: dict[str, dict[str, str]] = {
         "access_revoked_user": "🚫 Ваш доступ к боту отозван.",
         "pending_notice": "🆕 Запросов, ожидающих подтверждения: <b>{count}</b>",
         "btn_review": "👀 Рассмотреть",
+        "unknown_command": "🤔 Команда не распознана или это действие недоступно для вашей роли.\nМеню обновлено, пользуйтесь кнопками ниже.",
+        # --- перекличка ---
+        "btn_attendance": "📝 Посещаемость",
+        "att_title": "📝 <b>Посещаемость — {date}</b>\n\nНажимайте на рабочего: ⬜ → ✅ пришёл → ❌ прогул → 🟡 по уважительной причине.\n\n✅ {came}   ❌ {absent}   🟡 {excused}   ⬜ {unmarked}{note}",
+        "att_existing_note": "\n\nℹ️ Отметки за сегодня уже есть в таблице, их можно изменить.",
+        "att_btn_all": "✅ Все пришли",
+        "att_btn_start": "📝 Начать отметку",
+        "att_btn_edit": "✏️ Изменить",
+        "att_weekend": "🏖 Сегодня выходной ({weekday}).\nПосещаемость отмечается только в рабочие дни (пн–пт).",
+        "att_reminder": "⏰ <b>Напоминание</b>\n\nПосещаемость за сегодня ({date}) ещё не отмечена.",
+        "att_btn_save": "💾 Сохранить",
+        "att_not_all": "⚠️ Ещё не отмечено рабочих: {count}.",
+        "att_saved": "✅ <b>Посещаемость сохранена — {date}</b>\n\n✅ Пришли: <b>{came}</b>\n❌ Без уважительной причины: <b>{absent}</b>\n🟡 По уважительной причине: <b>{excused}</b>\n\nОтправьте отчёт боссу:",
+        "att_btn_send": "📤 Отправить боссу",
+        "att_sent": "✅ <b>Посещаемость сохранена — {date}</b>\n📤 Отчёт отправлен боссам: {count}.",
+        "att_no_boss": "⚠️ Не удалось отправить отчёт: в системе нет босса или он не нажимал /start в боте.",
+        "att_already_sent": "Отчёт уже отправлен.",
+        "att_no_workers": "⚠️ В таблице не найдены рабочие (столбец A, начиная с 3-й строки).",
+        "att_no_template": "⚠️ Лист посещаемости не найден: «{tab}».\nПереименуйте лист текущего месяца в это название.",
+        "att_layout_error": "⚠️ Структура таблицы не подходит: номера дней должны быть во 2-й строке.",
+        "att_sheet_changed": "⚠️ Список рабочих в таблице изменился. Откройте перекличку заново.",
+        "rep_daily_title": "📋 <b>Посещаемость за день — {date}</b>",
+        "rep_by": "✍️ Отметил: {name}",
+        "rep_came": "✅ Пришли: <b>{n}</b>",
+        "rep_absent": "❌ Отсутствуют: <b>{n}</b> (🟡 по причине: {excused}, ❌ без причины: {unexcused})",
+        "rep_came_list": "✅ <b>Список пришедших:</b>",
+        "rep_unexcused_list": "❌ <b>Отсутствуют без причины:</b>",
+        "rep_excused_list": "🟡 <b>Отсутствуют по причине:</b>",
+        "rep_nobody": "—",
+        "rep_weekly_title": "📊 <b>Недельный отчёт</b>\n{start} — {end}",
+        "rep_monthly_title": "📅 <b>Месячный отчёт — {month} {year}</b>",
+        "rep_recorded_days": "Рабочих дней: <b>{work}</b> · дней с отметками: <b>{n}</b>",
+        "rep_legend": "✅ пришёл · 🟡 по причине · ❌ без причины · ⬜ не отмечено",
+        "rep_no_data": "За этот период данных о посещаемости не найдено.",
+        "rep_missing_tab": "⚠️ Лист не найден: {tab}",
     },
 }
 
@@ -143,3 +213,25 @@ def get_texts(lang: str) -> dict[str, str]:
 def all_texts(key: str) -> set[str]:
     """Bitta kalitning barcha tillardagi matnlari (tugma matnini aniqlash uchun)."""
     return {texts[key] for texts in TEXTS.values()}
+
+
+MONTHS = {
+    "uz": ["Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun",
+           "Iyul", "Avgust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"],
+    "ru": ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+           "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"],
+}
+
+
+def month_name(lang: str, month: int) -> str:
+    return MONTHS.get(lang, MONTHS[DEFAULT_LANG])[month - 1]
+
+
+WEEKDAYS = {
+    "uz": ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"],
+    "ru": ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"],
+}
+
+
+def weekday_name(lang: str, weekday: int) -> str:
+    return WEEKDAYS.get(lang, WEEKDAYS[DEFAULT_LANG])[weekday]

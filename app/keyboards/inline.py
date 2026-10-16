@@ -1,8 +1,9 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.core.permissions import ROLE_ORDER, Role
-from app.keyboards.callbacks import AccessCb, DownloadCb, LangCb, MenuCb, PageCb
-from app.models import User
+from app.keyboards.callbacks import AccessCb, AttCb, DownloadCb, LangCb, MenuCb, PageCb
+from app.models import AttendanceDraft, User
+from app.services.attendance_grid import EXCUSED, MINUS, PLUS
 
 ASSIGNABLE_ON_REQUEST = (Role.BOSS, Role.STOREKEEPER, Role.WORKER)
 
@@ -102,3 +103,33 @@ def confirm_delete_kb(t: dict[str, str], uid: int) -> InlineKeyboardMarkup:
 
 def review_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     return _kb([[_btn(t["btn_review"], AccessCb(action="list"))]])
+
+
+# ---------- Yo'qlama ----------
+def attendance_kb(t: dict[str, str], draft: AttendanceDraft) -> InlineKeyboardMarkup:
+    icons = {None: "⬜", PLUS: "✅", MINUS: "❌", EXCUSED: "🟡"}
+    rows = [
+        [_btn(f"{icons[m]} {name}", AttCb(action="t", idx=i))]
+        for i, (name, m) in enumerate(zip(draft.names, draft.marks))
+    ]
+    rows.append([_btn(t["att_btn_all"], AttCb(action="all"))])
+    rows.append([_btn(t["att_btn_save"], AttCb(action="save"))])
+    return _kb(rows)
+
+
+# def attendance_send_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+#     return _kb([[_btn(t["att_btn_send"], AttCb(action="send"))]])
+
+def attendance_send_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    return _kb([
+        [_btn(t["att_btn_send"], AttCb(action="send"))],
+        [_btn(t["att_btn_edit"], AttCb(action="edit"))],
+    ])
+
+
+def attendance_edit_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    return _kb([[_btn(t["att_btn_edit"], AttCb(action="edit"))]])
+
+
+def attendance_start_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    return _kb([[_btn(t["att_btn_start"], AttCb(action="open"))]])

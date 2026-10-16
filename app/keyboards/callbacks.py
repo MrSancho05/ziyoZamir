@@ -21,3 +21,8 @@ class AccessCb(CallbackData, prefix="acc"):
     action: str  # list | open | approve | reject | set | del | delok
     uid: int = 0
     role: str = ""
+
+
+class AttCb(CallbackData, prefix="att"):
+    action: str  # t (toggle) | all | save | send
+    idx: int = 0
