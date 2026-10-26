@@ -9,6 +9,8 @@ def main_menu_kb(t: dict[str, str], role: Role | None) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text=t["btn_deficit"])])
     if has_permission(role, Permission.MARK_ATTENDANCE):
         rows.append([KeyboardButton(text=t["btn_attendance"])])
+    if has_permission(role, Permission.VIEW_ATTENDANCE):
+        rows.append([KeyboardButton(text=t["btn_check"])])
     if has_permission(role, Permission.MANAGE_USERS):
         rows.append([KeyboardButton(text=t["btn_users"])])
     rows.append([KeyboardButton(text=t["btn_lang"])])

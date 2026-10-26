@@ -22,6 +22,7 @@ class Settings:
     attendance_tab_format: str
     report_hour: int
     reminder_hour: int
+    deduct_excused: bool
     page_size: int = 10
 
 
@@ -57,8 +58,10 @@ def load_settings() -> Settings:
         fonts_dir=BASE_DIR / "assets" / "fonts",
         db_path=BASE_DIR / os.getenv("DB_PATH", "data/bot.db"),
         timezone=ZoneInfo(os.getenv("TIMEZONE", "Asia/Tashkent")),
-        # Oylik yo'qlama varag'i nomi. Masalan: "Davomat 2026-10"
-        attendance_tab_format=os.getenv("ATTENDANCE_TAB_FORMAT", "Davomat {year}-{month:02d}"),
+        # Yillik yo'qlama varag'i nomi. Masalan: "Davomat 2026". Oylar shu varaqda blok-blok joylashadi
+        attendance_tab_format=os.getenv("ATTENDANCE_TAB_FORMAT", "Davomat {year}"),
         report_hour=int(os.getenv("REPORT_HOUR", "9")),
         reminder_hour=int(os.getenv("REMINDER_HOUR", "10")),
+        # 0 (standart): sababli kelmagan kunlar maoshdan ushlanmaydi; 1: ushlanadi
+        deduct_excused=os.getenv("DEDUCT_EXCUSED", "0").strip().lower() in ("1", "true", "yes", "ha"),
     )

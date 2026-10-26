@@ -26,3 +26,7 @@ class AccessCb(CallbackData, prefix="acc"):
 class AttCb(CallbackData, prefix="att"):
     action: str  # t (toggle) | all | save | send
     idx: int = 0
+
+
+class ViewCb(CallbackData, prefix="view"):
+    action: str  # today | week | month

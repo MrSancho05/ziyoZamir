@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
-from typing import Callable
+from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -12,7 +12,7 @@ from app.locales.texts import get_texts, month_name
 from app.services.access import safe_send
 from app.services.attendance import AttendanceService
 from app.services.attendance_grid import is_workday
-from app.services.attendance_report import format_period
+from app.services.attendance_report import format_month, format_period
 from app.storage.report_log import ReportLog
 from app.storage.users import UserRepository
 from app.utils.schedule import last_monthly_due, last_weekly_due
@@ -65,19 +65,24 @@ class ReportScheduler:
         end = due.date()
         start = end - timedelta(days=6)
         await self._process(
-            "weekly", end.isoformat(), now, start, end,
-            lambda t, lang: t["rep_weekly_title"].format(
-                start=start.strftime("%d.%m"), end=end.strftime("%d.%m.%Y")),
+            "weekly", end.isoformat(), now,
+            fetch=lambda: self._attendance.period_stats(start, end),
+            render=lambda t, lang, stats: format_period(
+                t, lang,
+                t["rep_weekly_title"].format(start=start.strftime("%d.%m"), end=end.strftime("%d.%m.%Y")),
+                stats),
         )
 
-        # Oylik: oyning 1-kuni, o'tgan oy uchun
+        # Oylik: oyning 1-kuni, o'tgan oy uchun (maosh hisobi bilan)
         due_m = last_monthly_due(now, self._hour)
         last_day = (due_m - timedelta(days=1)).date()
-        first_day = last_day.replace(day=1)
         await self._process(
-            "monthly", f"{last_day.year}-{last_day.month:02d}", now, first_day, last_day,
-            lambda t, lang: t["rep_monthly_title"].format(
-                month=month_name(lang, last_day.month), year=last_day.year),
+            "monthly", f"{last_day.year}-{last_day.month:02d}", now,
+            fetch=lambda: self._attendance.month_payroll(last_day.year, last_day.month, last_day),
+            render=lambda t, lang, report: format_month(
+                t, lang,
+                t["rep_monthly_title"].format(month=month_name(lang, last_day.month), year=last_day.year),
+                report),
         )
 
     async def _reminder(self, now: datetime) -> None:
@@ -111,8 +116,9 @@ class ReportScheduler:
             logger.info("Yo'qlama eslatmasi yuborildi: %d kishi", len(recipients))
         await self._log.mark_sent("reminder", key)
 
-    async def _process(self, kind: str, key: str, now: datetime, start: date, end: date,
-                       title_fn: Callable[[dict[str, str], str], str]) -> None:
+    async def _process(self, kind: str, key: str, now: datetime,
+                       fetch: Callable[[], Awaitable[Any]],
+                       render: Callable[[dict[str, str], str, Any], str]) -> None:
         if await self._log.was_sent(kind, key):
             return
         if not await self._log.has_any(kind):
@@ -124,7 +130,7 @@ class ReportScheduler:
             return
 
         try:
-            stats = await self._attendance.period_stats(start, end)
+            data = await fetch()
         except Exception:
             logger.exception("%s hisobot ma'lumotini o'qib bo'lmadi, 10 daqiqadan keyin qayta uriniladi", kind)
             self._retry_at[kind] = now + RETRY_AFTER
@@ -135,7 +141,7 @@ class ReportScheduler:
             logger.warning("%s hisobotni yuboradigan boss yo'q", kind)
         for boss in bosses:
             t = get_texts(boss.lang)
-            text = format_period(t, boss.lang, title_fn(t, boss.lang), stats)
+            text = render(t, boss.lang, data)
             for part in split_message(text):
                 await safe_send(self._bot, boss.id, part)
 

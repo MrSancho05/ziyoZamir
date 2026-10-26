@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.core.permissions import ROLE_ORDER, Role
-from app.keyboards.callbacks import AccessCb, AttCb, DownloadCb, LangCb, MenuCb, PageCb
+from app.keyboards.callbacks import AccessCb, AttCb, DownloadCb, LangCb, MenuCb, PageCb, ViewCb
 from app.models import AttendanceDraft, User
 from app.services.attendance_grid import EXCUSED, MINUS, PLUS
 
@@ -117,9 +117,6 @@ def attendance_kb(t: dict[str, str], draft: AttendanceDraft) -> InlineKeyboardMa
     return _kb(rows)
 
 
-# def attendance_send_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
-#     return _kb([[_btn(t["att_btn_send"], AttCb(action="send"))]])
-
 def attendance_send_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     return _kb([
         [_btn(t["att_btn_send"], AttCb(action="send"))],
@@ -133,3 +130,36 @@ def attendance_edit_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
 
 def attendance_start_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     return _kb([[_btn(t["att_btn_start"], AttCb(action="open"))]])
+
+
+def view_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    return _kb([
+        [_btn(t["view_btn_today"], ViewCb(action="today"))],
+        [_btn(t["view_btn_week"], ViewCb(action="week"))],
+        [_btn(t["view_btn_month"], ViewCb(action="month"))],
+    ])
+
+
+def attendance_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    return _kb([
+        [_btn(t["att_btn_today"], AttCb(action="open"))],
+        [_btn(t["att_btn_past"], AttCb(action="past", idx=0))],
+    ])
+
+
+def attendance_calendar_kb(t: dict[str, str], month_label: str, weekday_labels: list[str],
+                           weeks: list[list[tuple[str, str, int]]],
+                           prev_ym: int | None, next_ym: int | None) -> InlineKeyboardMarkup:
+    """Oylik kalendar. weeks: haftalar, har biri 7 ta (matn, amal, qiymat). Amal: day | noop."""
+    rows = [
+        [
+            _btn("◀️", AttCb(action="cal", idx=prev_ym)) if prev_ym else _btn("·", AttCb(action="noop")),
+            _btn(month_label, AttCb(action="noop")),
+            _btn("▶️", AttCb(action="cal", idx=next_ym)) if next_ym else _btn("·", AttCb(action="noop")),
+        ],
+        [_btn(w, AttCb(action="noop")) for w in weekday_labels],
+    ]
+    for week in weeks:
+        rows.append([_btn(text, AttCb(action=action, idx=idx)) for text, action, idx in week])
+    rows.append([_btn(t["back"], AttCb(action="menu"))])
+    return _kb(rows)
