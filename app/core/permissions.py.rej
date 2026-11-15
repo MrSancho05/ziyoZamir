@@ -1,0 +1,24 @@
+diff a/app/core/permissions.py b/app/core/permissions.py	(rejected hunks)
+@@ -14,6 +14,7 @@
+     MANAGE_USERS = "manage_users"
+     MARK_ATTENDANCE = "mark_attendance"
+     VIEW_ATTENDANCE = "view_attendance"
++    VIEW_EXPENSES = "view_expenses"
+     MARK_EXPENSES = "mark_expenses"
+     VIEW_OWN_ATTENDANCE = "view_own_attendance"
+ 
+@@ -30,12 +31,14 @@
+         Permission.MANAGE_USERS,
+         Permission.MARK_ATTENDANCE,
+         Permission.VIEW_ATTENDANCE,
++        Permission.VIEW_EXPENSES,
+         Permission.MARK_EXPENSES,
+     }),
+     Role.BOSS: frozenset({
+         Permission.VIEW_DEFICIT,
+         Permission.DOWNLOAD_REPORTS,
+         Permission.VIEW_ATTENDANCE,
++        Permission.VIEW_EXPENSES,
+     }),
+     Role.STOREKEEPER: frozenset({
+         Permission.VIEW_DEFICIT,

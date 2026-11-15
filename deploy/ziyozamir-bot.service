@@ -1,0 +1,15 @@
+[Unit]
+Description=Ziyo Zamir Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/opt/ziyozamir_bot
+ExecStart=/opt/ziyozamir_bot/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
