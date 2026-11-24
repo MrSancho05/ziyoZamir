@@ -17,6 +17,8 @@ from app.services.reports.pdf import register_fonts
 from app.services.shop import ShopService
 from app.services.sheets import SheetsClient
 from app.services.warehouse import WarehouseService
+from app.services.web_server import DashboardService, WebServer, create_app, make_authorizer
+from app.keyboards.reply import set_webapp_url
 from app.storage.attendance_store import AttendanceStore
 from app.storage.categories import CategoryStore
 from app.storage.database import Database
@@ -97,11 +99,25 @@ async def main() -> None:
         warehouse=warehouse, report_cache=report_cache, flows_reminder_at=settings.flows_reminder_at,
         digest_at=settings.digest_at)
     ops_task = asyncio.create_task(ops.run())
+
+    # 📊 Jonli Dashboard: polling bilan bir jarayonda (aiohttp). Port band bo'lsa ham bot ishlayveradi
+    if settings.webapp_url and not set_webapp_url(settings.webapp_url):
+        logging.warning("WEBAPP_URL https:// bilan boshlanishi kerak (Telegram talabi): tugma ko'rsatilmaydi")
+    dashboard = DashboardService(shop=shop, flows=flows, attendance=attendance, warehouse=warehouse,
+                                 tz=settings.timezone)
+    web_server = WebServer(create_app(dashboard, make_authorizer(settings.bot_token, repo)),
+                           settings.webapp_host, settings.webapp_port)
+    try:
+        await web_server.start()
+    except OSError:
+        logging.exception("Dashboard serverini %s:%d da ishga tushirib bo'lmadi", settings.webapp_host,
+                          settings.webapp_port)
     try:
         await dp.start_polling(bot)
     finally:
         scheduler_task.cancel()
         ops_task.cancel()
+        await web_server.stop()
         db.close()
 
 

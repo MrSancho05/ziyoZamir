@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Jonli Dashboard</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #070b14; --bg2: #0d1424;
+    --glass: rgba(255,255,255,.06); --glass-strong: rgba(255,255,255,.10); --stroke: rgba(255,255,255,.10);
+    --text: #eef2ff; --muted: #8b97b5; --faint: rgba(255,255,255,.05);
+    --accent: #6d8bff; --accent2: #22d3ee; --good: #34d399; --bad: #fb7185; --warn: #fbbf24;
+    --blob1: #4f46e5; --blob2: #0ea5e9; --blob3: #db2777;
+    --shadow: 0 10px 40px rgba(0,0,0,.35);
+    --radius: 22px;
+  }
+  :root[data-theme="light"] {
+    --bg: #eef2fb; --bg2: #f7f9ff;
+    --glass: rgba(255,255,255,.62); --glass-strong: rgba(255,255,255,.85); --stroke: rgba(20,30,70,.08);
+    --text: #0f172a; --muted: #64748b; --faint: rgba(15,23,42,.05);
+    --accent: #4f6bff; --accent2: #0891b2; --good: #059669; --bad: #e11d48; --warn: #d97706;
+    --blob1: #a5b4fc; --blob2: #7dd3fc; --blob3: #f9a8d4;
+    --shadow: 0 10px 30px rgba(30,41,90,.10);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Inter, sans-serif;
+    min-height: 100vh; overflow-x: hidden; padding: 0 0 calc(28px + env(safe-area-inset-bottom));
+  }
+  /* --- jonli fon --- */
+  .aurora { position: fixed; inset: -20vh -20vw; z-index: 0; pointer-events: none; filter: blur(70px); opacity: .55; }
+  .aurora i { position: absolute; width: 55vw; height: 55vw; border-radius: 50%; mix-blend-mode: screen; }
+  :root[data-theme="light"] .aurora i { mix-blend-mode: multiply; }
+  .aurora i:nth-child(1) { background: var(--blob1); top: 5%; left: 10%; animation: drift 18s ease-in-out infinite; }
+  .aurora i:nth-child(2) { background: var(--blob2); top: 35%; right: 0; animation: drift 22s ease-in-out -6s infinite reverse; }
+  .aurora i:nth-child(3) { background: var(--blob3); bottom: 0; left: 25%; width: 40vw; height: 40vw; animation: drift 26s ease-in-out -12s infinite; }
+  @keyframes drift { 0%,100% { transform: translate(0,0) scale(1); } 33% { transform: translate(8vw,-6vh) scale(1.15); } 66% { transform: translate(-6vw,8vh) scale(.9); } }
+  .wrap { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 14px 16px 0; }
+
+  .glass {
+    background: var(--glass); border: 1px solid var(--stroke); border-radius: var(--radius);
+    backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%);
+    box-shadow: var(--shadow);
+  }
+  /* --- sarlavha --- */
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 2px 14px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; font-size: 22px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); box-shadow: 0 6px 22px rgba(79,107,255,.45); }
+  h1 { font-size: 19px; margin: 0; letter-spacing: -.2px; }
+  .sub { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 8px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .icon-btn { width: 40px; height: 40px; border-radius: 14px; border: 1px solid var(--stroke); background: var(--glass);
+    color: var(--text); font-size: 18px; display: grid; place-items: center; cursor: pointer; }
+  .icon-btn.spin span { animation: spin .8s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- davr tablari --- */
+  .tabs { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); padding: 5px; gap: 2px; border-radius: 18px; }
+  .tabs button { position: relative; z-index: 1; border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600; font-size: 13px; line-height: 1;
+    padding: 11px 2px; border-radius: 14px; cursor: pointer; transition: color .25s; white-space: nowrap; }
+  .tabs button.on { color: #fff; }
+  .pill { position: absolute; z-index: 0; top: 5px; bottom: 5px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); box-shadow: 0 6px 18px rgba(79,107,255,.45);
+    transition: transform .45s cubic-bezier(.2,.9,.25,1.1), width .45s; }
+  .seasons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; overflow: hidden; max-height: 0; opacity: 0;
+    margin-top: 0; transition: max-height .45s ease, opacity .35s ease, margin-top .45s ease; }
+  .seasons.open { max-height: 60px; opacity: 1; margin-top: 10px; }
+  .seasons button { border: 1px solid var(--stroke); background: var(--glass); color: var(--text); border-radius: 14px;
+    padding: 10px 4px; font: inherit; font-weight: 600; font-size: 13px; line-height: 1; cursor: pointer; transition: transform .2s, background .3s, border-color .3s; }
+  .seasons button.on { background: var(--glass-strong); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .seasons button:active, .tabs button:active, .nav button:active { transform: scale(.95); }
+
+  /* --- davr navigatsiyasi --- */
+  .nav { display: flex; align-items: center; gap: 8px; margin: 12px 0 16px; }
+  .nav button { flex: 0 0 auto; border: 1px solid var(--stroke); background: var(--glass); color: var(--text);
+    border-radius: 14px; padding: 10px 12px; font: inherit; font-weight: 600; font-size: 13px; line-height: 1; cursor: pointer; transition: opacity .2s, transform .15s; }
+  .nav button:disabled { opacity: .3; cursor: default; }
+  .badge { flex: 1; min-width: 0; text-align: center; padding: 9px 10px; border-radius: 14px; font-size: 13px; font-weight: 600; }
+  .badge small { display: block; color: var(--muted); font-weight: 500; font-size: 11.5px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge .lbl { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* --- KPI --- */
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kpi { padding: 14px 14px 13px; position: relative; overflow: hidden; min-height: 112px; }
+  .kpi::after { content: ""; position: absolute; width: 120px; height: 120px; right: -40px; top: -50px; border-radius: 50%;
+    background: radial-gradient(circle, var(--glow, rgba(109,139,255,.35)), transparent 70%); }
+  .kpi .k-ico { font-size: 18px; }
+  .kpi .k-name { color: var(--muted); font-size: 12px; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: .4px; }
+  .kpi .k-val { font-size: 22px; font-weight: 800; letter-spacing: -.5px; margin-top: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kpi .k-val small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 3px; margin-top: 6px; font-size: 11.5px; font-weight: 700;
+    padding: 3px 8px; border-radius: 999px; background: var(--faint); color: var(--muted); }
+  .chip.up { color: var(--bad); background: rgba(251,113,133,.14); }
+  .chip.down { color: var(--good); background: rgba(52,211,153,.14); }
+  .chip.good { color: var(--good); background: rgba(52,211,153,.14); }
+  .chip.warn { color: var(--warn); background: rgba(251,191,36,.14); }
+
+  /* --- kartalar --- */
+  .card { padding: 16px 14px 10px; margin-top: 14px; }
+  .card h2 { margin: 0 2px 2px; font-size: 15.5px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .card h2 span.hint { color: var(--muted); font-size: 12px; font-weight: 500; }
+  .chart { width: 100%; height: 270px; }
+  .chart.sm { height: 250px; }
+  .legend { display: flex; gap: 14px; margin: 6px 2px 0; color: var(--muted); font-size: 12px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .empty { color: var(--muted); text-align: center; padding: 38px 10px 30px; font-size: 13.5px; }
+
+  .rows { margin: 8px 0 6px; }
+  .row { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 10px; padding: 10px 4px;
+    border-top: 1px solid var(--faint); }
+  .row:first-child { border-top: 0; }
+  .rank { width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; font-size: 12px; font-weight: 800;
+    background: var(--faint); color: var(--muted); }
+  .row:nth-child(1) .rank { background: linear-gradient(135deg,#fbbf24,#f59e0b); color: #1f1300; }
+  .row:nth-child(2) .rank { background: linear-gradient(135deg,#cbd5e1,#94a3b8); color: #0f172a; }
+  .row:nth-child(3) .rank { background: linear-gradient(135deg,#fdba74,#c2410c); color: #fff; }
+  .row .nm { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { color: var(--muted); font-size: 12px; }
+  .row .amt { font-weight: 700; font-size: 13.5px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .bar { height: 5px; border-radius: 99px; background: var(--faint); overflow: hidden; margin-top: 6px; }
+  .bar b { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 1.1s cubic-bezier(.2,.8,.2,1); }
+
+  .deficit { display: grid; gap: 10px; margin: 10px 0 8px; }
+  .def { padding: 12px 13px; border-radius: 16px; background: var(--faint); border: 1px solid var(--stroke); }
+  .def .top { display: grid; gap: 3px; min-width: 0; }
+  .def .nm { font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .def .q { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .def .q b { color: var(--bad); }
+  .def .bar b { background: linear-gradient(90deg, var(--bad), var(--warn)); }
+  .def.crit { border-color: rgba(251,113,133,.45); box-shadow: 0 0 0 1px rgba(251,113,133,.15) inset; }
+  .ok-box { display: flex; align-items: center; gap: 10px; padding: 16px 12px; color: var(--good); font-weight: 600; }
+
+  footer { text-align: center; color: var(--muted); font-size: 11.5px; margin: 18px 0 4px; }
+
+  /* --- kirish animatsiyasi --- */
+  .rise { opacity: 0; transform: translateY(18px) scale(.985); animation: rise .7s cubic-bezier(.2,.8,.2,1) forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  .skeleton { position: relative; overflow: hidden; }
+  .skeleton::before { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.10), transparent); animation: shimmer 1.3s infinite; }
+  @keyframes shimmer { to { transform: translateX(100%); } }
+  .loading .k-val, .loading .chip { opacity: .35; }
+  .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(30px);
+    opacity: 0; z-index: 5; padding: 11px 16px; border-radius: 14px; font-size: 13px; transition: .35s; max-width: 90vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .gate { text-align: center; padding: 40px 20px; margin-top: 40px; }
+  .gate div { font-size: 46px; margin-bottom: 8px; }
+  @media (max-width: 360px) { .kpi .k-val { font-size: 19px; } .tabs button { font-size: 12px; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .rise { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<div class="aurora"><i></i><i></i><i></i></div>
+<div class="wrap" id="app">
+  <header class="rise" style="animation-delay:0s">
+    <div class="brand">
+      <div class="logo">📊</div>
+      <div>
+        <h1 id="t-title">Jonli Dashboard</h1>
+        <div class="sub"><span class="live"></span><span id="t-sub">Ziyo Zamir MCHJ</span></div>
+      </div>
+    </div>
+    <button class="icon-btn" id="refresh" aria-label="refresh"><span>⟳</span></button>
+  </header>
+
+  <div class="tabs glass rise" id="tabs" style="animation-delay:.05s"><div class="pill" id="pill"></div></div>
+  <div class="seasons" id="seasons"></div>
+
+  <div class="nav rise" style="animation-delay:.1s">
+    <button id="prev">⬅️ <span id="t-prev">Oldingi</span></button>
+    <div class="badge glass"><span class="lbl" id="period">…</span><small id="range">—</small></div>
+    <button id="next"><span id="t-next">Keyingi</span> ➡️</button>
+  </div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <div class="card glass rise" style="animation-delay:.35s">
+    <h2><span id="t-trend">Xarajat va sarf dinamikasi</span><span class="hint" id="t-trend-hint"></span></h2>
+    <div class="legend"><span><i style="background:var(--accent)"></i><span id="t-lg-shop">Do'kon</span></span>
+      <span><i style="background:var(--accent2)"></i><span id="t-lg-out">Material sarfi</span></span></div>
+    <div class="chart" id="c-trend"></div>
+  </div>
+
+  <div class="card glass rise" style="animation-delay:.42s">
+    <h2><span id="t-cats">Kategoriya bo'yicha sarf</span></h2>
+    <div class="chart sm" id="c-donut"></div>
+  </div>
+
+  <div class="card glass rise" style="animation-delay:.49s">
+    <h2><span id="t-att">Zavod davomati</span><span class="hint" id="att-hint"></span></h2>
+    <div class="chart sm" id="c-gauge"></div>
+  </div>
+
+  <div class="card glass rise" style="animation-delay:.56s">
+    <h2><span id="t-top">Eng ko'p sarflangan</span></h2>
+    <div class="rows" id="top"></div>
+  </div>
+
+  <div class="card glass rise" style="animation-delay:.63s">
+    <h2><span id="t-def">Tanqis tovarlar</span><span class="hint" id="def-count"></span></h2>
+    <div class="deficit" id="deficit"></div>
+  </div>
+
+  <footer id="foot">Ziyo Zamir MCHJ · Asia/Tashkent</footer>
+</div>
+<div class="toast glass" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const qs = new URLSearchParams(location.search);
+  const LANG = (qs.get("lang") || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.language_code) || "uz")
+                 .startsWith("ru") ? "ru" : "uz";
+
+  const I18N = {
+    uz: { title: "Jonli Dashboard", tabs: ["Kunlik", "Haftalik", "Oylik", "Mavsumiy", "Yillik"],
+      seasons: ["❄️ Qish", "🌸 Bahor", "☀️ Yoz", "🍂 Kuz"], prev: "Oldingi", next: "Keyingi",
+      shop: "Do'kon xarajati", stock: "Ombor qiymati", cons: "Material sarfi", att: "Davomat",
+      cur: "so'm", vsPrev: "oldingi davrga", noPrev: "taqqoslash yo'q", inflow: "Kirim",
+      trend: "Xarajat va sarf dinamikasi", lgShop: "Do'kon", lgOut: "Material sarfi",
+      cats: "Kategoriya bo'yicha sarf", total: "Jami", attTitle: "Zavod davomati",
+      came: "keldi", absent: "sababsiz", excused: "sababli", noAtt: "Bu davrda yo'qlama olinmagan",
+      top: "Eng ko'p sarflangan", def: "Tanqis tovarlar", stockLbl: "Qoldiq", norm: "Normativ",
+      allGood: "Hamma tovarlar yetarli — tanqis yo'q", noData: "Bu davrda ma'lumot yo'q",
+      updated: "Yangilandi", gateTitle: "Faqat Telegram orqali", gateText: "Dashboard'ni botdagi «📊 Jonli Dashboard» tugmasi orqali oching.", noAccess: "Ruxsat yo'q",
+      forbidden: "Bu bo'lim faqat Boss va Admin uchun.", err: "Ma'lumotni olib bo'lmadi. Qayta urinib ko'ring.",
+      partial: "Ba'zi ma'lumotlarni o'qib bo'lmadi", ms: "ms", sub: "Ziyo Zamir MCHJ · ijroiya paneli",
+      mln: "mln", mlrd: "mlrd", ming: "ming", days: "kun", items: "ta" },
+    ru: { title: "Живой дашборд", tabs: ["День", "Неделя", "Месяц", "Сезон", "Год"],
+      seasons: ["❄️ Зима", "🌸 Весна", "☀️ Лето", "🍂 Осень"], prev: "Назад", next: "Вперёд",
+      shop: "Расход магазина", stock: "Стоимость склада", cons: "Расход материалов", att: "Посещаемость",
+      cur: "сум", vsPrev: "к прошлому периоду", noPrev: "нет сравнения", inflow: "Приход",
+      trend: "Динамика расходов", lgShop: "Магазин", lgOut: "Материалы",
+      cats: "Расход по категориям", total: "Итого", attTitle: "Посещаемость завода",
+      came: "пришли", absent: "без причины", excused: "по причине", noAtt: "За период посещаемость не отмечалась",
+      top: "Больше всего расходуется", def: "Дефицит товаров", stockLbl: "Остаток", norm: "Норматив",
+      allGood: "Всего достаточно — дефицита нет", noData: "Нет данных за период",
+      updated: "Обновлено", gateTitle: "Только через Telegram", gateText: "Откройте дашборд кнопкой «📊 Jonli Dashboard» в боте.", noAccess: "Нет доступа",
+      forbidden: "Раздел доступен только Боссу и Админу.", err: "Не удалось загрузить данные. Попробуйте ещё раз.",
+      partial: "Часть данных не удалось прочитать", ms: "мс", sub: "Ziyo Zamir MCHJ · панель руководителя",
+      mln: "млн", mlrd: "млрд", ming: "тыс", days: "дн", items: "шт" },
+  };
+  const L = I18N[LANG];
+  document.documentElement.lang = LANG;
+
+  // ---------- Telegram + mavzu ----------
+  function applyTheme() {
+    const scheme = (tg && tg.colorScheme) || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = scheme;
+    if (tg) {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+      try { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); } catch (e) {}
+    }
+    Object.values(charts).forEach(c => c && c.__render && c.__render());
+  }
+  const haptic = (kind = "light") => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(kind); } catch (e) {} };
+  if (tg) { tg.ready(); tg.expand(); tg.onEvent && tg.onEvent("themeChanged", applyTheme); }
+
+  // ---------- holat ----------
+  const TF = ["d", "w", "m", "s", "y"];
+  const state = { tf: "w", season: currentSeason(), offset: 0, data: null, busy: false, reqId: 0 };
+  try { const saved = JSON.parse(localStorage.getItem("zz_dash") || "{}"); if (TF.includes(saved.tf)) state.tf = saved.tf; if ([0,1,2,3].includes(saved.season)) state.season = saved.season; } catch (e) {}
+  function currentSeason() { const m = new Date().getMonth() + 1; return m === 12 || m <= 2 ? 0 : m <= 5 ? 1 : m <= 8 ? 2 : 3; }
+  function save() { try { localStorage.setItem("zz_dash", JSON.stringify({ tf: state.tf, season: state.season })); } catch (e) {} }
+
+  // ---------- formatlash ----------
+  const fmt = n => (n == null ? "—" : Math.round(n).toLocaleString("ru-RU").replace(/,/g, " "));
+  function compact(n) {
+    if (n == null) return "—";
+    const a = Math.abs(n);
+    if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace(".", ",") + " " + L.mlrd;
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace(".", ",") + " " + L.mln;
+    if (a >= 1e4) return Math.round(n / 1e3) + " " + L.ming;
+    return fmt(n);
+  }
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const $ = id => document.getElementById(id);
+
+  // ---------- raqamlar sanab chiqishi ----------
+  function countUp(el, to, render, ms = 1100) {
+    const from = Number(el.dataset.v || 0);
+    el.dataset.v = to == null ? 0 : to;
+    if (to == null) { el.innerHTML = render(null); return; }
+    const t0 = performance.now();
+    const ease = x => 1 - Math.pow(1 - x, 4);
+    const step = now => {
+      const p = Math.min(1, (now - t0) / ms);
+      el.innerHTML = render(from + (to - from) * ease(p));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // ---------- statik matnlar ----------
+  $("t-title").textContent = L.title; document.title = L.title; $("t-sub").textContent = L.sub;
+  $("t-prev").textContent = L.prev; $("t-next").textContent = L.next;
+  $("t-trend").textContent = L.trend; $("t-lg-shop").textContent = L.lgShop; $("t-lg-out").textContent = L.lgOut;
+  $("t-cats").textContent = L.cats; $("t-att").textContent = L.attTitle; $("t-top").textContent = L.top; $("t-def").textContent = L.def;
+
+  const tabs = $("tabs"), pill = $("pill"), seasonsEl = $("seasons");
+  L.tabs.forEach((name, i) => {
+    const b = document.createElement("button"); b.textContent = name; b.dataset.tf = TF[i];
+    b.onclick = () => { if (state.tf === TF[i]) return; haptic(); state.tf = TF[i]; state.offset = 0; save(); syncControls(); load(); };
+    tabs.appendChild(b);
+  });
+  L.seasons.forEach((name, i) => {
+    const b = document.createElement("button"); b.textContent = name; b.dataset.s = i;
+    b.onclick = () => { if (state.season === i) return; haptic(); state.season = i; state.offset = 0; save(); syncControls(); load(); };
+    seasonsEl.appendChild(b);
+  });
+  function syncControls() {
+    const btns = [...tabs.querySelectorAll("button")];
+    btns.forEach(b => b.classList.toggle("on", b.dataset.tf === state.tf));
+    const on = btns.find(b => b.dataset.tf === state.tf);
+    if (on) { pill.style.width = on.offsetWidth + "px"; pill.style.transform = `translateX(${on.offsetLeft - 5}px)`; pill.style.left = "5px"; }
+    seasonsEl.classList.toggle("open", state.tf === "s");
+    [...seasonsEl.children].forEach(b => b.classList.toggle("on", Number(b.dataset.s) === state.season));
+    $("next").disabled = state.offset >= 0;
+  }
+  $("prev").onclick = () => { if (state.offset <= -60) return; haptic(); state.offset -= 1; syncControls(); load(); };
+  $("next").onclick = () => { if (state.offset >= 0) return; haptic(); state.offset += 1; syncControls(); load(); };
+  $("refresh").onclick = () => { haptic("medium"); load(true); };
+  // badge ustida chapga / o'ngga surish — davrlar bo'ylab yurish
+  let sx = null;
+  document.querySelector(".nav").addEventListener("touchstart", e => { sx = e.touches[0].clientX; }, { passive: true });
+  document.querySelector(".nav").addEventListener("touchend", e => {
+    if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; sx = null;
+    if (dx > 60) $("prev").click(); else if (dx < -60) $("next").click();
+  });
+
+  // ---------- KPI kartalari ----------
+  const KPI = [
+    { id: "shop", ico: "🏪", name: L.shop, glow: "rgba(109,139,255,.40)" },
+    { id: "stock", ico: "📦", name: L.stock, glow: "rgba(34,211,238,.35)" },
+    { id: "cons", ico: "🔧", name: L.cons, glow: "rgba(219,39,119,.30)" },
+    { id: "att", ico: "👥", name: L.att, glow: "rgba(52,211,153,.35)" },
+  ];
+  $("kpis").innerHTML = KPI.map((k, i) => `
+    <div class="kpi glass rise" style="--glow:${k.glow};animation-delay:${.15 + i * .06}s">
+      <div class="k-ico">${k.ico}</div><div class="k-name">${esc(k.name)}</div>
+      <div class="k-val" id="kv-${k.id}">—</div><div class="chip" id="kc-${k.id}">…</div>
+    </div>`).join("");
+
+  function deltaChip(el, delta, invert = false) {
+    if (delta == null) { el.className = "chip"; el.textContent = L.noPrev; return; }
+    const up = delta > 0;
+    el.className = "chip " + (delta === 0 ? "" : (up !== invert ? "up" : "down"));
+    el.textContent = `${up ? "▲" : delta < 0 ? "▼" : "•"} ${Math.abs(delta).toLocaleString("ru-RU")}%`;
+    el.title = L.vsPrev;
+  }
+  const money = v => v == null ? "—" : `${compact(v)}<small>${L.cur}</small>`;
+
+  function renderKpis(d) {
+    const k = d.kpi;
+    countUp($("kv-shop"), k.shop.value, money); deltaChip($("kc-shop"), k.shop.delta);
+    countUp($("kv-stock"), k.stock_value, money);
+    const ci = $("kc-stock"); ci.className = "chip"; ci.textContent = `📥 ${L.inflow} ${compact(k.inflow)}`;
+    countUp($("kv-cons"), k.consumption.value, money); deltaChip($("kc-cons"), k.consumption.delta);
+    const a = k.attendance;
+    countUp($("kv-att"), a ? a.rate : null, v => v == null ? "—" : `${Math.round(v)}<small>%</small>`);
+    const ac = $("kc-att");
+    if (!a || !a.recorded) { ac.className = "chip"; ac.textContent = L.noAtt; }
+    else { ac.className = "chip " + (a.rate >= 90 ? "good" : "warn"); ac.textContent = `❌ ${a.absent} · 🟡 ${a.excused}`; }
+  }
+
+  // ---------- grafiklar ----------
+  const charts = {};
+  function chart(id) {
+    if (!window.echarts) return null;
+    if (!charts[id]) {
+      charts[id] = echarts.init($(id), null, { renderer: "canvas" });
+      charts[id].on("click", () => haptic());
+    }
+    return charts[id];
+  }
+  const baseText = () => ({ color: css("--muted"), fontFamily: "inherit" });
+  const tooltipBase = () => ({
+    backgroundColor: css("--glass-strong") || "rgba(20,25,40,.9)", borderColor: css("--stroke"), borderWidth: 1,
+    textStyle: { color: css("--text"), fontSize: 12 }, extraCssText: "backdrop-filter: blur(12px); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25);",
+  });
+
+  function renderTrend(d) {
+    const c = chart("c-trend"); if (!c) return;
+    const s = d.series, accent = css("--accent"), accent2 = css("--accent2");
+    const has = s.shop.some(v => v) || s.outflow.some(v => v);
+    $("t-trend-hint").textContent = has ? "" : L.noData;
+    c.__render = () => renderTrend(d);
+    c.setOption({
+      animationDuration: 1100, animationEasing: "cubicOut", animationDelay: i => i * 25,
+      grid: { left: 6, right: 8, top: 22, bottom: 4, containLabel: true },
+      tooltip: { ...tooltipBase(), trigger: "axis", confine: true,
+        axisPointer: { type: "cross", crossStyle: { color: css("--muted") }, lineStyle: { color: accent, type: "dashed" }, label: { backgroundColor: accent } },
+        valueFormatter: v => `${fmt(v)} ${L.cur}` },
+      xAxis: { type: "category", data: s.labels, axisLine: { lineStyle: { color: css("--stroke") } }, axisTick: { show: false },
+        axisLabel: { ...baseText(), fontSize: 10.5, hideOverlap: true, formatter: v => v.split(" ")[0] } },
+      yAxis: { type: "value", splitNumber: 4, splitLine: { lineStyle: { color: css("--faint") } }, axisLabel: { ...baseText(), fontSize: 10.5, formatter: v => compact(v) } },
+      series: [
+        { name: L.lgShop, type: "bar", data: s.shop, barMaxWidth: 22, itemStyle: { borderRadius: [8, 8, 3, 3],
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: accent }, { offset: 1, color: accent + "33" }]) },
+          emphasis: { itemStyle: { shadowBlur: 18, shadowColor: accent } } },
+        { name: L.lgOut, type: "line", smooth: .45, data: s.outflow, symbol: "circle", symbolSize: 7, showSymbol: s.labels.length <= 14,
+          lineStyle: { width: 3, color: accent2, shadowBlur: 14, shadowColor: accent2 }, itemStyle: { color: accent2, borderColor: "#fff", borderWidth: 1.5 },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: accent2 + "55" }, { offset: 1, color: accent2 + "00" }]) } },
+      ],
+    }, true);
+  }
+
+  const PALETTE = ["#6d8bff", "#22d3ee", "#f472b6", "#fbbf24", "#34d399", "#a78bfa", "#fb923c", "#94a3b8"];
+  function renderDonut(d) {
+    const c = chart("c-donut"); if (!c) return;
+    c.__render = () => renderDonut(d);
+    const data = d.categories.map((x, i) => ({ name: x.name, value: x.value, itemStyle: { color: PALETTE[i % PALETTE.length] } }));
+    const total = data.reduce((a, b) => a + b.value, 0);
+    if (!total) { c.clear(); c.setOption({ graphic: [{ type: "text", left: "center", top: "middle", style: { text: L.noData, fill: css("--muted"), font: "14px sans-serif" } }] }); return; }
+    c.setOption({
+      animationDuration: 1300, animationEasing: "elasticOut",
+      tooltip: { ...tooltipBase(), trigger: "item", valueFormatter: v => `${fmt(v)} ${L.cur}` },
+      legend: { bottom: 0, left: "center", icon: "circle", itemWidth: 9, itemHeight: 9, textStyle: { ...baseText(), fontSize: 11.5 }, type: "scroll" },
+      graphic: [{ type: "group", left: "center", top: "37%", children: [
+        { type: "text", left: "center", top: -6, style: { text: compact(total), fill: css("--text"), font: "800 22px -apple-system, sans-serif", textAlign: "center" } },
+        { type: "text", left: "center", top: 22, style: { text: `${L.total}, ${L.cur}`, fill: css("--muted"), font: "12px -apple-system, sans-serif", textAlign: "center" } }] }],
+      series: [{ type: "pie", radius: ["56%", "78%"], center: ["50%", "43%"], avoidLabelOverlap: true, padAngle: 2,
+        itemStyle: { borderRadius: 10, shadowBlur: 22, shadowColor: "rgba(109,139,255,.35)" }, label: { show: false },
+        emphasis: { scale: true, scaleSize: 8, itemStyle: { shadowBlur: 32 } }, data }],
+    }, true);
+  }
+
+  function renderGauge(d) {
+    const c = chart("c-gauge"); if (!c) return;
+    c.__render = () => renderGauge(d);
+    const a = d.kpi.attendance;
+    const rate = a && a.recorded ? a.rate : 0;
+    $("att-hint").textContent = a && a.recorded ? `✅ ${a.came} · ❌ ${a.absent} · 🟡 ${a.excused}` : L.noAtt;
+    const color = rate >= 90 ? css("--good") : rate >= 75 ? css("--warn") : css("--bad");
+    c.setOption({
+      series: [
+        { type: "gauge", startAngle: 220, endAngle: -40, min: 0, max: 100, radius: "92%", center: ["50%", "56%"],
+          progress: { show: true, width: 16, roundCap: true, itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: css("--accent") }, { offset: 1, color }]), shadowBlur: 18, shadowColor: color } },
+          axisLine: { roundCap: true, lineStyle: { width: 16, color: [[1, css("--faint")]] } },
+          pointer: { show: true, length: "58%", width: 5, itemStyle: { color } }, anchor: { show: true, size: 12, itemStyle: { color: css("--text") } },
+          axisTick: { show: false }, splitLine: { show: false }, axisLabel: { distance: -38, ...baseText(), fontSize: 10, formatter: v => (v % 25 === 0 ? v : "") },
+          title: { offsetCenter: [0, "62%"], ...baseText(), fontSize: 12 },
+          detail: { valueAnimation: true, offsetCenter: [0, "34%"], formatter: v => a && a.recorded ? `${Math.round(v)}%` : "—", color: css("--text"), fontSize: 30, fontWeight: 800 },
+          animationDuration: 1600, animationEasing: "cubicOut",
+          data: [{ value: rate, name: a && a.recorded ? `${a.recorded} ${L.days}` : "" }] },
+      ],
+    }, true);
+  }
+
+  // ---------- ro'yxatlar ----------
+  function renderTop(d) {
+    const el = $("top");
+    if (!d.top.length) { el.innerHTML = `<div class="empty">${L.noData}</div>`; return; }
+    const max = Math.max(...d.top.map(x => x.value || 0), 1);
+    el.innerHTML = d.top.map((x, i) => `
+      <div class="row rise" style="animation-delay:${.05 * i}s">
+        <div class="rank">${i + 1}</div>
+        <div style="min-width:0"><div class="nm">${esc(x.name)}</div>
+          <div class="meta">${fmt(x.qty)} ${esc(x.unit || L.items)}</div><div class="bar"><b data-w="${Math.round((x.value || 0) * 100 / max)}"></b></div></div>
+        <div class="amt">${compact(x.value)} <span class="meta">${L.cur}</span></div>
+      </div>`).join("");
+    growBars(el);
+  }
+  function renderDeficit(d) {
+    const el = $("deficit");
+    $("def-count").textContent = d.low_count ? `⚠️ ${d.low_count}` : "";
+    if (!d.low.length) { el.innerHTML = `<div class="ok-box">✅ ${L.allGood}</div>`; return; }
+    el.innerHTML = d.low.map((x, i) => `
+      <div class="def rise ${x.pct <= 25 ? "crit" : ""}" style="animation-delay:${.04 * i}s">
+        <div class="top"><div class="nm">${esc(x.name)}</div>
+          <div class="q">${L.stockLbl}: <b>${fmt(x.stock)}</b> / ${L.norm}: ${fmt(x.min)} ${esc(x.unit || "")}</div></div>
+        <div class="bar"><b data-w="${Math.max(3, x.pct)}"></b></div>
+      </div>`).join("");
+    growBars(el);
+  }
+  function growBars(root) { requestAnimationFrame(() => setTimeout(() => root.querySelectorAll(".bar b").forEach(b => { b.style.width = b.dataset.w + "%"; }), 60)); }
+
+  // ---------- yuklash ----------
+  let toastTimer;
+  function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
+  function gate(icon, title, text) {
+    $("app").innerHTML = `<div class="gate glass rise"><div>${icon}</div><h2>${esc(title)}</h2><p style="color:var(--muted)">${esc(text)}</p></div>`;
+  }
+
+  async function load(manual = false) {
+    const initData = tg ? tg.initData : "";
+    if (!initData) { gate("🔒", L.gateTitle, L.gateText); return; }
+    const id = ++state.reqId;
+    document.body.classList.add("loading");
+    $("kpis").classList.add("skeleton");
+    if (manual) $("refresh").classList.add("spin");
+    const q = new URLSearchParams({ tf: state.tf, season: state.season, offset: state.offset, lang: LANG });
+    try {
+      const res = await fetch("api/dashboard?" + q, { headers: { "X-Telegram-Init-Data": initData } });
+      const data = await res.json().catch(() => ({ ok: false }));
+      if (id !== state.reqId) return;                        // eskirgan javob (tez bosishlar)
+      if (res.status === 403) { gate("⛔", L.noAccess, L.forbidden); return; }
+      if (res.status === 401) { gate("🔒", L.gateTitle, L.gateText); return; }
+      if (!data.ok) throw new Error(data.error || res.status);
+      render(data);
+      if (data.errors && data.errors.length) toast(`⚠️ ${L.partial}`);
+    } catch (e) {
+      if (id === state.reqId) toast(`⚠️ ${L.err}`);
+    } finally {
+      if (id === state.reqId) { document.body.classList.remove("loading"); $("kpis").classList.remove("skeleton"); $("refresh").classList.remove("spin"); }
+    }
+  }
+
+  function render(d) {
+    state.data = d;
+    // badge: asosiy qatorda davr nomi (tab nomisiz), pastda — sanalar oralig'i va kunlar soni
+    const parts = d.label.split(" · ");
+    const main = (parts.slice(1).join(" · ") || d.label).replace(/\s*\([^)]*\)\s*$/, "");
+    const f = s => s.split("-").reverse().join(".");
+    const days = Math.round((new Date(d.range.end) - new Date(d.range.start)) / 864e5) + 1;
+    $("period").textContent = main;
+    $("range").textContent = d.range.start === d.range.end ? (d.label.match(/\(([^)]*)\)/) || [, ""])[1]
+      : `${f(d.range.start).slice(0, 5)} — ${f(d.range.end)} · ${days} ${L.days}`;
+    $("next").disabled = !d.can_next; $("prev").disabled = !d.can_prev;
+    renderKpis(d); renderTrend(d); renderDonut(d); renderGauge(d); renderTop(d); renderDeficit(d);
+    $("foot").textContent = `${L.updated}: ${d.generated_at} · ${d.ms} ${L.ms} · Asia/Tashkent`;
+  }
+
+  window.addEventListener("resize", () => { Object.values(charts).forEach(c => c.resize()); syncControls(); });
+  applyTheme();
+  requestAnimationFrame(() => { syncControls(); load(); });
+})();
+</script>
+</body>
+</html>

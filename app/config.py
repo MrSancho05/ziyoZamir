@@ -38,6 +38,9 @@ class Settings:
     attendance_reminder_at: time
     flows_reminder_at: time
     digest_at: time
+    webapp_url: str = ""
+    webapp_host: str = "0.0.0.0"
+    webapp_port: int = 8080
     page_size: int = 10
 
 
@@ -108,4 +111,8 @@ def load_settings() -> Settings:
         flows_reminder_at=_parse_hm("FLOWS_REMINDER_TIME", "17:30"),
         # Shanba va oy oxiri: yig'ma hisobot vaqti
         digest_at=_parse_hm("DIGEST_TIME", "20:30"),
+        # 📊 Jonli Dashboard (Telegram Mini App). Tugma faqat HTTPS manzil berilganda chiqadi
+        webapp_url=os.getenv("WEBAPP_URL", "").strip(),
+        webapp_host=os.getenv("WEBAPP_HOST", "0.0.0.0").strip() or "0.0.0.0",
+        webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
     )

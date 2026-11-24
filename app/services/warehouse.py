@@ -730,9 +730,10 @@ class WarehouseService:
         """(Приход qatorlari, Расход qatorlari) soni — `day` sanasi bilan."""
         return await self._sheets.run(self._day_counts_sync, day)
 
-    async def stock_value(self) -> float:
-        """Ombordagi jami qoldiq qiymati (Сумма остатка, bo'lmasa qoldiq × o'rtacha narx)."""
-        return sum(p.value or p.stock * p.avg_price for p in await self.catalog(force=True))
+    async def stock_value(self, fresh: bool = True) -> float:
+        """Ombordagi jami qoldiq qiymati (Сумма остатка, bo'lmasa qoldiq × o'rtacha narx).
+        fresh=False: 60 soniyalik katalog keshidan (Dashboard)."""
+        return sum(p.value or p.stock * p.avg_price for p in await self.catalog(force=fresh))
 
     async def low_items(self) -> List[Product]:
         return [p for p in await self.catalog() if p.is_low]

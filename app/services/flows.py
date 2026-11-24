@@ -118,6 +118,10 @@ class FlowsService:
             await self._store.save_snapshot(key, day.isoformat(), d.digest, d.rows)
         return deltas
 
+    async def rows(self, key: str, start: date, end: date):
+        """Kunlik yozuvlar (flows_store): Jonli Dashboard grafiklari uchun. Google Sheets o'qilmaydi."""
+        return await self._store.rows_between(key, start.isoformat(), end.isoformat())
+
     async def summary(self, start: date, end: date) -> dict[str, FlowSummary]:
         out: dict[str, FlowSummary] = {}
         for key in KEYS:

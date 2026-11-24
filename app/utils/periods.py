@@ -81,3 +81,27 @@ def build_range(tf: str, today: date, season: int = WINTER) -> Range:
     # yillik
     return Range(TF_YEARLY, date(today.year, 1, 1), today, date(today.year - 1, 1, 1),
                  _safe_day(today.year - 1, today.month, today.day))
+
+
+def shifted_range(tf: str, today: date, season: int = WINTER, offset: int = 0) -> Range:
+    """`build_range` + davrlar bo'ylab yurish: offset=0 — joriy davr (bugungacha), -1 — oldingi TO'LIQ davr
+    (o'tgan hafta / oy / mavsum / yil), -2 — undan oldingisi va h.k. Kelajak (offset > 0) bo'lmaydi."""
+    if offset >= 0:
+        return build_range(tf, today, season)
+    if tf == TF_DAILY:
+        day = today
+        for _ in range(-offset):
+            day = _previous_working_day(day)
+        return build_range(TF_DAILY, day)
+    if tf == TF_WEEKLY:
+        monday = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
+        return build_range(TF_WEEKLY, monday + timedelta(days=6))
+    if tf == TF_MONTHLY:
+        idx = today.year * 12 + today.month - 1 + offset
+        year, month = idx // 12, idx % 12 + 1
+        return build_range(TF_MONTHLY, date(year, month, calendar.monthrange(year, month)[1]))
+    if tf == TF_SEASONAL:
+        season = season if season in SEASONS else WINTER
+        year = latest_season_year(season, today) + offset
+        return build_range(TF_SEASONAL, season_bounds(season, year)[1], season)
+    return build_range(TF_YEARLY, date(today.year + offset, 12, 31))

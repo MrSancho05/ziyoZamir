@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 from app.core.permissions import Permission, Role, has_permission
@@ -23,9 +25,29 @@ _MENU = (
 )
 
 
+_WEBAPP_URL = ""       # main.py: set_webapp_url(settings.webapp_url)
+
+
+def set_webapp_url(url: str) -> bool:
+    """📊 Jonli Dashboard manzili. Telegram Mini App faqat HTTPS bilan ishlaydi: boshqa manzil e'tiborsiz qoldiriladi
+    (aks holda Telegram butun menyuni rad etadi). True — tugma yoqildi."""
+    global _WEBAPP_URL
+    _WEBAPP_URL = url if url.lower().startswith("https://") else ""
+    return bool(_WEBAPP_URL)
+
+
+def _dashboard_url(lang: str) -> str:
+    parts = urlsplit(_WEBAPP_URL)
+    query = "&".join(q for q in (parts.query, urlencode({"lang": lang})) if q)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
 def main_menu_kb(t: Dict[str, str], role: Optional[Role], real_role: Optional[Role] = None) -> ReplyKeyboardMarkup:
     """`real_role` = ADMIN va `role` boshqa bo'lsa: admin 🎭 rolni sinayapti — "🔙 Adminga qaytish" chiqadi."""
     kb = ReplyKeyboardBuilder()
+    if _WEBAPP_URL and role in (Role.BOSS, Role.ADMIN):
+        kb.add(KeyboardButton(text=t["btn_dashboard"],
+                              web_app=WebAppInfo(url=_dashboard_url(t.get("lang_code", "uz")))))
     for permission, key in _MENU:
         if has_permission(role, permission):
             kb.add(KeyboardButton(text=t[key]))
