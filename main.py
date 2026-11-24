@@ -101,7 +101,7 @@ async def main() -> None:
         flows_report_at=settings.flows_report_at, activity_check_at=settings.activity_check_at,
         auto_send_minutes=settings.auto_send_minutes, flow_tabs=flow_tabs, att_store=att_store,
         warehouse=warehouse, report_cache=report_cache, flows_reminder_at=settings.flows_reminder_at,
-        digest_at=settings.digest_at)
+        digest_at=settings.digest_at, summary_at=settings.summary_at)
     ops_task = asyncio.create_task(ops.run())
 
     # 📊 Jonli Dashboard: polling bilan bir jarayonda (aiohttp). Port band bo'lsa ham bot ishlayveradi

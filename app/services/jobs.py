@@ -21,7 +21,17 @@ from app.services.boss_reports import (
     format_shop_period,
     send_to_bosses,
 )
-from app.services.digest import MONTHLY, WEEKLY, DigestData, pdf_lines, render_digest, render_flows_daily
+from app.services.attendance_grid import EXCUSED, MINUS, PLUS
+from app.services.digest import (
+    MONTHLY,
+    WEEKLY,
+    DigestData,
+    ExecDay,
+    pdf_lines,
+    render_digest,
+    render_exec_summary,
+    render_flows_daily,
+)
 from app.services.flows import FlowDelta, FlowsService
 from app.services.notify import deliver_once, staff_recipients
 from app.services.reports.pdf import build_text_pdf
@@ -55,6 +65,7 @@ class OpsScheduler:
     - 17:30: kirim/chiqim kiritilmagan yoki narxi yo'q tovar bo'lsa — sklad xodimlariga eslatma (tugmalar bilan);
     - 18:30: kunlik kirim/chiqim hisoboti (📄 Batafsil) yoki "🚨 bugun hech narsa kiritilmadi" ogohlantirishi;
     - 19:00: kun yopiladi (flows_store);
+    - 20:00 (dushanba–shanba): kunlik ijroiya xulosasi — do'kon + davomat + ombor (📄 Batafsil, 📊 Dashboard);
     - shanba 20:30: BITTA haftalik yig'ma hisobot (do'kon + ombor + davomat), oy oxiri 20:30: oylik (+ PDF);
     - yillik hisobotlar (do'kon xarajati, kirim/chiqim) oldingi yil bilan taqqoslanadi;
     - yakshanba: hech qanday eslatma, muddat yoki "kiritilmagan" ogohlantirishi yuborilmaydi.
@@ -68,7 +79,7 @@ class OpsScheduler:
                  attendance_deadline_at: time, attendance_send_at: time, flows_report_at: time,
                  activity_check_at: time, auto_send_minutes: int, flow_tabs: dict[str, str],
                  att_store: AttendanceStore, warehouse: WarehouseService, report_cache: ReportCache,
-                 flows_reminder_at: time, digest_at: time) -> None:
+                 flows_reminder_at: time, digest_at: time, summary_at: time = time(20, 0)) -> None:
         self._bot, self._repo, self._log, self._pending = bot, repo, log, pending
         self._attendance, self._shop, self._flows = attendance, shop, flows
         self._tz, self._hour = tz, report_hour
@@ -82,6 +93,7 @@ class OpsScheduler:
         self._cache = report_cache
         self._flows_rem_at = flows_reminder_at
         self._digest_at = digest_at
+        self._summary_at = summary_at
         self._retry_at: dict[str, datetime] = {}
 
     async def run(self) -> None:
@@ -95,7 +107,8 @@ class OpsScheduler:
         # Eslatma va muddat xabarlari birinchi turadi: keyingi (sekin) Google Sheets vazifalari ularni kechiktirmasin
         for job in (self._shop_reminder, self._shop_deadline, self._attendance_deadline,
                     self._auto_send, self._attendance_auto_send, self._flows_reminder,
-                    self._flows_daily, self._activity_check, self._digests, self._shop_reports,
+                    self._flows_daily, self._activity_check, self._exec_summary, self._digests,
+                    self._shop_reports,
                     self._flows_reports):
             try:
                 await job(now)
@@ -375,6 +388,68 @@ class OpsScheduler:
         if p.kind == "monthly":
             return t[f"{prefix}_monthly_title"].format(month=month_name(lang, p.end.month), year=p.end.year)
         return t[f"{prefix}_yearly_title"].format(year=p.end.year)
+
+    # ---------------- 📋 20:00 kunlik ijroiya xulosasi (dushanba–shanba) ----------------
+    async def _exec_summary(self, now: datetime) -> None:
+        async def job() -> bool:
+            today = now.date()
+            if today.weekday() == 6:                       # yakshanba — dam olish
+                return True
+            data = await self._collect_exec_day(today)
+            if len(data.errors) >= 3:
+                raise RuntimeError("ijroiya xulosasi: hech bir bo'limni o'qib bo'lmadi")   # 10 daqiqadan keyin qayta
+            key = today.isoformat()
+            sections = {}
+            for lang in TEXTS:
+                sections[lang] = render_exec_summary(get_texts(lang), lang, data)
+                await self._cache.save("es", key, lang, sections[lang])
+            delivered = await send_to_bosses(self._bot, self._repo, lambda t, lang: sections[lang]["brief"],
+                                             markup=lambda t, lang: report_toggle_kb(t, "es", key))
+            logger.info("Ijroiya xulosasi yuborildi (%s), bosslar: %d", key, delivered)
+            return True
+        await self._daily("exec_summary", now, self._summary_at, job, end=time(23, 0))
+
+    async def _collect_exec_day(self, day: date) -> ExecDay:
+        d = ExecDay(day=day)
+        try:
+            found = await self._shop.get_day(day)
+            d.shop_entered = bool(found and found[0] and found[1] is not None)
+            d.shop_amount = found[1] if d.shop_entered else None
+            d.shop_month = await self._shop.month_total_until(day)
+        except Exception:
+            logger.exception("Ijroiya xulosasi: do'kon xarajatini o'qib bo'lmadi")
+            d.errors.append("shop")
+        try:
+            peek = await self._attendance.peek_day(day)
+            names, marks = peek if peek else ([], [])
+            d.att_recorded = any(m is not None for m in marks)
+            for name, mark in zip(names, marks):
+                if mark == PLUS:
+                    d.came.append(name)
+                elif mark == MINUS:
+                    d.absent.append(name)
+                elif mark == EXCUSED:
+                    d.excused.append(name)
+                else:
+                    d.unmarked += 1
+        except Exception:
+            logger.exception("Ijroiya xulosasi: davomatni o'qib bo'lmadi")
+            d.errors.append("att")
+        try:
+            d.deltas = await self._flows.preview(day)
+        except Exception:
+            logger.exception("Ijroiya xulosasi: kirim/chiqimni o'qib bo'lmadi")
+            d.errors.append("flows")
+        try:
+            unpriced = await self._wh.unpriced()
+            d.unpriced_total = len(unpriced)
+            d.unpriced_today = [r for r in unpriced if r.day == day]
+            d.stock_value = await self._wh.stock_value()
+            d.low = await self._wh.low_items()
+        except Exception:
+            logger.exception("Ijroiya xulosasi: ombor qoldig'ini o'qib bo'lmadi")
+            d.errors.append("stock")
+        return d
 
     # ---------------- 📊 yig'ma hisobotlar: shanba 20:30 va oy oxiri 20:30 ----------------
     async def _digests(self, now: datetime) -> None:

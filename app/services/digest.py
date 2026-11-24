@@ -225,3 +225,120 @@ def render_flows_daily(t: Dict[str, str], day: date, deltas: Dict[str, FlowDelta
         lines.append(t["fd_brief_top"].format(items=", ".join(escape(r.label or r.text) for r in top)))
     full = "\n".join(warn + [""] + [detail]) if warn else detail
     return {"brief": "\n".join(lines), "detail": fit_message(full, t["an_truncated"])}
+
+
+# ---------------- 20:00 kunlik ijroiya xulosasi ----------------
+@dataclass
+class ExecDay:
+    """Bir kunning hamma bo'limlari: do'kon, davomat, ombor. None — bo'limni o'qib bo'lmadi."""
+    day: date
+    shop_entered: Optional[bool] = None
+    shop_amount: Optional[int] = None
+    shop_month: Optional[int] = None
+    att_recorded: Optional[bool] = None
+    came: List[str] = field(default_factory=list)
+    absent: List[str] = field(default_factory=list)
+    excused: List[str] = field(default_factory=list)
+    unmarked: int = 0
+    deltas: Optional[Dict[str, FlowDelta]] = None
+    unpriced_today: List[UnpricedRow] = field(default_factory=list)
+    unpriced_total: int = 0
+    low: List[Product] = field(default_factory=list)
+    stock_value: Optional[float] = None
+    errors: List[str] = field(default_factory=list)
+
+
+def _flow_totals(d: ExecDay, key: str) -> tuple:
+    dl = (d.deltas or {}).get(key)
+    rows = dl.new_rows if dl and dl.sheet_found else []
+    return len(rows), sum(r.amount or 0 for r in rows), rows
+
+
+def render_exec_summary(t: Dict[str, str], lang: str, d: ExecDay) -> Dict[str, str]:
+    """Qisqacha (6–10 qator, har bo'limda ✅ / ⚠️) va batafsil (ismlar, tovarlar). Formulalarsiz."""
+    from app.locales.texts import weekday_name
+    head = [t["es_title"].format(date=d.day.strftime("%d.%m.%Y"), weekday=weekday_name(lang, d.day.weekday())), ""]
+    issues = 0
+
+    # 🏪 do'kon
+    if "shop" in d.errors or d.shop_entered is None:
+        shop_line = t["es_shop_err"]
+    elif d.shop_entered:
+        shop_line = t["es_shop_ok"].format(amount=fmt_money(d.shop_amount or 0),
+                                           month=fmt_money(d.shop_month or 0))
+    else:
+        shop_line = t["es_shop_missing"]
+        issues += 1
+
+    # 👥 davomat
+    saturday = d.day.weekday() == 5
+    if "att" in d.errors or d.att_recorded is None:
+        att_line = t["es_att_err"]
+    elif not d.att_recorded:
+        att_line = t["es_att_sat_none"] if saturday else t["es_att_missing"]
+        issues += 0 if saturday else 1
+    elif saturday:
+        att_line = t["es_att_sat"].format(n=len(d.came))
+    else:
+        total = len(d.came) + len(d.absent) + len(d.excused)
+        rate = round(len(d.came) * 100 / total) if total else 0
+        if d.absent:
+            issues += 1
+        att_line = t["es_att_ok" if not d.absent else "es_att_warn"].format(
+            rate=rate, came=len(d.came), total=total, absent=len(d.absent), excused=len(d.excused))
+
+    # 📦 ombor
+    n_in, a_in, rows_in = _flow_totals(d, "inflow")
+    n_out, a_out, rows_out = _flow_totals(d, "outflow")
+    if "flows" in d.errors or d.deltas is None:
+        wh_line = t["es_wh_err"]
+    elif n_in + n_out == 0:
+        wh_line = t["es_wh_none"]
+        issues += 1
+    else:
+        wh_line = t["es_wh_ok"].format(n_in=n_in, a_in=fmt_money(a_in), n_out=n_out, a_out=fmt_money(a_out))
+    extra = []
+    if d.unpriced_total:
+        extra.append(t["es_unpriced"].format(n=d.unpriced_total))
+        issues += 1
+    if d.low:
+        extra.append(t["es_low"].format(n=len(d.low)))
+
+    verdict = t["es_all_ok"] if issues == 0 else t["es_issues"].format(n=issues)
+    brief = "\n".join(head + [shop_line, att_line, wh_line] + extra + ["", verdict])
+
+    # ---- batafsil ----
+    lines = head + [t["es_d_shop"], shop_line]
+    lines += ["", t["es_d_att"], att_line]
+    if d.att_recorded and not saturday:
+        if d.absent:
+            lines.append(t["es_d_absent"].format(names=", ".join(escape(n) for n in d.absent)))
+        if d.excused:
+            lines.append(t["es_d_excused"].format(names=", ".join(escape(n) for n in d.excused)))
+        if d.unmarked:
+            lines.append(t["es_d_unmarked"].format(n=d.unmarked))
+    elif d.att_recorded and saturday and d.came:
+        lines.append(t["es_d_came"].format(names=", ".join(escape(n) for n in d.came)))
+    lines += ["", t["es_d_wh"], wh_line]
+    for title_key, rows in (("es_d_in", rows_in), ("es_d_out", rows_out)):
+        if rows:
+            lines.append(t[title_key])
+            for r in sorted(rows, key=lambda r: -(r.amount or 0))[:8]:
+                qty = f" — {_qty(r.qty)}" if r.qty is not None else ""
+                amount = f" · {fmt_money(r.amount)} " + t["es_cur"] if r.amount else ""
+                lines.append(f"• {escape(r.label or r.text)}{qty}{amount}")
+            if len(rows) > 8:
+                lines.append(f"… +{len(rows) - 8}")
+    if d.unpriced_today or d.unpriced_total:
+        lines += ["", t["es_unpriced"].format(n=d.unpriced_total)]
+        lines += [t["fd_unpriced_warn"].format(item=escape(r.name)) for r in d.unpriced_today[:5]]
+    if d.stock_value is not None:
+        lines += ["", t["dg_wh_stock_full"].format(value=_money(d.stock_value))]
+    if d.low:
+        lines += [t["dg_wh_low_title"].format(n=len(d.low))]
+        lines += [t["dg_wh_low_line"].format(name=escape(p.name), stock=_qty(p.stock), unit=escape(p.unit),
+                                             min=_qty(p.min_stock)) for p in d.low[:10]]
+        if len(d.low) > 10:
+            lines.append(f"… +{len(d.low) - 10}")
+    lines += ["", verdict]
+    return {"brief": brief, "detail": fit_message("\n".join(lines), t["an_truncated"])}
