@@ -919,6 +919,7 @@ _V3_TEXTS = {
     "uz": {
         "lang_code": "uz",
         "btn_dashboard": "📊 Jonli Dashboard",
+        "btn_live_dashboard": "📊 Jonli Dashboard",
         # --- menyu ---
         "btn_role_test": "🎭 Rolni sinash",
         "btn_admin_back": "🔙 Adminga qaytish",
@@ -1052,6 +1053,7 @@ _V3_TEXTS = {
     "ru": {
         "lang_code": "ru",
         "btn_dashboard": "📊 Живой дашборд",
+        "btn_live_dashboard": "📊 Живой дашборд",
         "btn_role_test": "🎭 Тест роли",
         "btn_admin_back": "🔙 Вернуться в админ",
         "btn_help": "❓ Помощь",

@@ -1,6 +1,8 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.keyboards.webapp import dashboard_rows
+
 from app.core.permissions import ROLE_ORDER, Role
 from app.keyboards.callbacks import (
     AccessCb,
@@ -196,7 +198,8 @@ def analytics_result_kb(t: dict[str, str], kind: str, tf: str, season: int, ymd:
     """Natija xabari ostidagi yagona tugma: qisqacha ko'rinishda "Batafsil", batafsilda "Qisqacha".
     Bosilganda xabar o'sha joyda tahrirlanadi (yangi xabar yuborilmaydi)."""
     target, label = ("d", t["an_detail"]) if showing == "b" else ("b", t["an_brief"])
-    return _kb([[_btn(label, InspectCb(kind=kind, action="tog", tf=tf, season=season, mode=target, ymd=ymd))]])
+    return _kb([[_btn(label, InspectCb(kind=kind, action="tog", tf=tf, season=season, mode=target, ymd=ymd))]]
+               + dashboard_rows(t))
 
 
 def attendance_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
@@ -291,8 +294,8 @@ def report_toggle_kb(t: dict[str, str], kind: str, key: str, showing: str = "bri
     """Kunlik hisobot: 📄 Batafsil <-> 🔼 Qisqacha."""
     from app.keyboards.callbacks import RepCb
     if showing == "brief":
-        return _kb([[_btn(t["rp_btn_detail"], RepCb(k=kind, p=key, s="detail"))]])
-    return _kb([[_btn(t["rp_btn_brief"], RepCb(k=kind, p=key, s="brief"))]])
+        return _kb([[_btn(t["rp_btn_detail"], RepCb(k=kind, p=key, s="detail"))]] + dashboard_rows(t))
+    return _kb([[_btn(t["rp_btn_brief"], RepCb(k=kind, p=key, s="brief"))]] + dashboard_rows(t))
 
 
 def digest_kb(t: dict[str, str], kind: str, key: str, showing: str = "brief") -> InlineKeyboardMarkup:
@@ -301,7 +304,7 @@ def digest_kb(t: dict[str, str], kind: str, key: str, showing: str = "brief") ->
     buttons = [_btn(("• " if showing == s else "") + t[label], RepCb(k=kind, p=key, s=s))
                for s, label in (("shop", "rp_btn_shop"), ("wh", "rp_btn_wh"), ("att", "rp_btn_att"))]
     nav = [[_btn(t["rp_btn_brief"], RepCb(k=kind, p=key, s="brief"))]] if showing != "brief" else []
-    return _grid(buttons, nav)
+    return _grid(buttons, nav + dashboard_rows(t))
 
 
 def role_pick_kb(t: dict[str, str]) -> InlineKeyboardMarkup:

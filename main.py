@@ -18,7 +18,8 @@ from app.services.shop import ShopService
 from app.services.sheets import SheetsClient
 from app.services.warehouse import WarehouseService
 from app.services.web_server import DashboardService, WebServer, create_app, make_authorizer
-from app.keyboards.reply import set_webapp_url
+from app.keyboards.webapp import set_webapp_url
+from app.services.webapp_menu import sync_all_menu_buttons
 from app.storage.attendance_store import AttendanceStore
 from app.storage.categories import CategoryStore
 from app.storage.database import Database
@@ -85,6 +86,9 @@ async def main() -> None:
     dp.include_router(router)
 
     logging.info("Bot ishga tushdi")
+    # 📊 Jonli Dashboard tugmalari: hisobotlar yuborilishidan OLDIN yoqiladi
+    if settings.webapp_url and not set_webapp_url(settings.webapp_url):
+        logging.warning("WEBAPP_URL https:// bilan boshlanishi kerak (Telegram talabi): tugma ko'rsatilmaydi")
     scheduler = ReportScheduler(bot, repo, report_log, attendance, settings.timezone,
                                 reminder_at=settings.attendance_reminder_at,
                                 deadline_at=settings.attendance_deadline_at)
@@ -101,12 +105,15 @@ async def main() -> None:
     ops_task = asyncio.create_task(ops.run())
 
     # 📊 Jonli Dashboard: polling bilan bir jarayonda (aiohttp). Port band bo'lsa ham bot ishlayveradi
-    if settings.webapp_url and not set_webapp_url(settings.webapp_url):
-        logging.warning("WEBAPP_URL https:// bilan boshlanishi kerak (Telegram talabi): tugma ko'rsatilmaydi")
     dashboard = DashboardService(shop=shop, flows=flows, attendance=attendance, warehouse=warehouse,
                                  tz=settings.timezone)
     web_server = WebServer(create_app(dashboard, make_authorizer(settings.bot_token, repo)),
                            settings.webapp_host, settings.webapp_port)
+    if set_webapp_url(settings.webapp_url):         # takroriy chaqiruv xavfsiz
+        # chap pastki "Menu" tugmasi: Boss/Admin — 📊 Dashboard, boshqalar — oddiy menyu (fonda, startni kechiktirmaydi)
+        menu_task = asyncio.create_task(sync_all_menu_buttons(bot, repo))
+    else:
+        menu_task = None
     try:
         await web_server.start()
     except OSError:
@@ -117,6 +124,8 @@ async def main() -> None:
     finally:
         scheduler_task.cancel()
         ops_task.cancel()
+        if menu_task is not None:
+            menu_task.cancel()
         await web_server.stop()
         db.close()
 

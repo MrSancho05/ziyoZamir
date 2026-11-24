@@ -16,6 +16,7 @@ from app.keyboards.inline import (
     users_list_kb,
 )
 from app.keyboards.reply import main_menu_kb
+from app.services.webapp_menu import sync_menu_button
 from app.locales.texts import LANG_NAMES, all_texts, get_texts
 from app.models import STATUS_PENDING, User
 from app.services.access import safe_send
@@ -114,6 +115,7 @@ async def approve(callback: CallbackQuery, callback_data: AccessCb, t: dict[str,
         ut["role_assigned_user"].format(role=ut[f"role_{role.value}"]),
         reply_markup=main_menu_kb(ut, role),
     )
+    await sync_menu_button(bot, await repo.get(target.id))
 
 
 @router.callback_query(AccessCb.filter(F.action == "reject"))
@@ -161,6 +163,7 @@ async def change_role(callback: CallbackQuery, callback_data: AccessCb, t: dict[
         ut["role_changed_user"].format(role=ut[f"role_{role.value}"]),
         reply_markup=main_menu_kb(ut, role),
     )
+    await sync_menu_button(bot, updated)
 
 
 @router.callback_query(AccessCb.filter(F.action == "del"))
