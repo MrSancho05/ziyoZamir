@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from app.core.permissions import Role
 from app.models import AttendanceDraft, DeficitItem
 
 
@@ -18,6 +19,8 @@ class UserStore:
         self._drafts: dict[int, AttendanceDraft] = {}
         self._draft_locks: dict[int, asyncio.Lock] = {}
         self._awaiting: dict[int, tuple[str, int, float]] = {}
+        self._role_override: dict[int, Role] = {}    # 🎭 admin -> sinalayotgan rol (faqat xotirada)
+        self._audit: dict[int, dict] = {}            # do'kon xarajati tuzatishi: sabab kutilmoqda
 
     def get_products(self, user_id: int, kind: str) -> list[DeficitItem]:
         return self._lists.get(user_id, {}).get(kind, [])
@@ -60,3 +63,23 @@ class UserStore:
 
     def clear_awaiting(self, user_id: int) -> None:
         self._awaiting.pop(user_id, None)
+
+    # --- 🎭 Rolni sinash (bazadagi rol o'zgarmaydi) ---
+    def set_role_override(self, user_id: int, role: Role) -> None:
+        self._role_override[user_id] = role
+
+    def get_role_override(self, user_id: int) -> Role | None:
+        return self._role_override.get(user_id)
+
+    def clear_role_override(self, user_id: int) -> None:
+        self._role_override.pop(user_id, None)
+
+    # --- do'kon xarajati: Bossga yuborilgan kun tahrirlanganda sabab kutilmoqda ---
+    def set_audit(self, user_id: int, data: dict) -> None:
+        self._audit[user_id] = data
+
+    def get_audit(self, user_id: int) -> dict | None:
+        return self._audit.get(user_id)
+
+    def clear_audit(self, user_id: int) -> dict | None:
+        return self._audit.pop(user_id, None)

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+import calendar
+from datetime import date, datetime, time, timedelta
 
 
 def last_weekly_due(now: datetime, hour: int) -> datetime:
@@ -55,3 +56,22 @@ def periods(now: datetime, hour: int) -> list[Period]:
     yearly = Period("yearly", str(year), date(year, 1, 1), date(year, 12, 31),
                     date(year - 1, 1, 1), date(year - 1, 12, 31))
     return [weekly, monthly, yearly]
+
+
+def last_saturday_due(now: datetime, at: time) -> datetime:
+    """Eng oxirgi o'tgan shanba soat `at` (hozirgi vaqtdan oshmagan)."""
+    days_since = (now.weekday() - 5) % 7
+    due = (now - timedelta(days=days_since)).replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    if due > now:
+        due -= timedelta(days=7)
+    return due
+
+
+def last_month_end_due(now: datetime, at: time) -> datetime:
+    """Eng oxirgi o'tgan oy oxiri (oyning oxirgi kuni) soat `at`."""
+    last = calendar.monthrange(now.year, now.month)[1]
+    due = now.replace(day=last, hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    if due > now:
+        prev = now.replace(day=1) - timedelta(days=1)
+        due = prev.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    return due

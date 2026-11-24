@@ -9,6 +9,8 @@ from app.handlers import (
     fallback,
     language,
     my_attendance,
+    reports,
+    roles,
     shop,
     start,
     top_products,
@@ -17,6 +19,8 @@ from app.handlers import (
 
 router = Router(name="root")
 router.include_routers(
+    roles.router,       # 🎭 Rolni sinash / 🔙 Adminga qaytish / ❓ Yordam
+    reports.router,     # Boss/Admin hisobotlari: Batafsil <-> Qisqacha (joyida tahrirlash)
     warehouse.router,   # Kirim / Chiqim / Mahsulotlar (admin + sklad); ochiq jarayonni menyu/buyruqda yopadi
     start.router,
     language.router,

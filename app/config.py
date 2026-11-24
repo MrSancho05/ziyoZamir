@@ -35,6 +35,9 @@ class Settings:
     flows_report_at: time
     activity_check_at: time
     auto_send_minutes: int
+    attendance_reminder_at: time
+    flows_reminder_at: time
+    digest_at: time
     page_size: int = 10
 
 
@@ -99,4 +102,10 @@ def load_settings() -> Settings:
         flows_report_at=_parse_hm("FLOWS_REPORT_TIME", "18:30"),
         activity_check_at=_parse_hm("ACTIVITY_CHECK_TIME", "19:00"),
         auto_send_minutes=int(os.getenv("AUTO_SEND_MINUTES", "30")),
+        # 13:30 yo'qlama eslatmasi (muddat: ATTENDANCE_DEADLINE_TIME, 14:30)
+        attendance_reminder_at=_parse_hm("ATTENDANCE_REMINDER_TIME", "13:30"),
+        # 17:30 kirim/chiqim eslatmasi (muddat: FLOWS_REPORT_TIME, 18:30)
+        flows_reminder_at=_parse_hm("FLOWS_REMINDER_TIME", "17:30"),
+        # Shanba va oy oxiri: yig'ma hisobot vaqti
+        digest_at=_parse_hm("DIGEST_TIME", "20:30"),
     )

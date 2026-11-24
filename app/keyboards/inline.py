@@ -284,3 +284,36 @@ def link_names_kb(t: dict[str, str], uid: int, names: list[str]) -> InlineKeyboa
 def top_periods_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     return _grid([_btn(t["btn_top_30"], TopCb(period="30")), _btn(t["btn_top_90"], TopCb(period="90")),
                   _btn(t["btn_top_all"], TopCb(period="all"))])
+
+
+# ---------- Boss/Admin hisobotlari: joyida tahrirlanadigan tugmalar ----------
+def report_toggle_kb(t: dict[str, str], kind: str, key: str, showing: str = "brief") -> InlineKeyboardMarkup:
+    """Kunlik hisobot: 📄 Batafsil <-> 🔼 Qisqacha."""
+    from app.keyboards.callbacks import RepCb
+    if showing == "brief":
+        return _kb([[_btn(t["rp_btn_detail"], RepCb(k=kind, p=key, s="detail"))]])
+    return _kb([[_btn(t["rp_btn_brief"], RepCb(k=kind, p=key, s="brief"))]])
+
+
+def digest_kb(t: dict[str, str], kind: str, key: str, showing: str = "brief") -> InlineKeyboardMarkup:
+    """Haftalik / oylik yig'ma hisobot: bo'limlar batafsil + 🔼 Qisqacha (hammasi bitta xabarda)."""
+    from app.keyboards.callbacks import RepCb
+    buttons = [_btn(("• " if showing == s else "") + t[label], RepCb(k=kind, p=key, s=s))
+               for s, label in (("shop", "rp_btn_shop"), ("wh", "rp_btn_wh"), ("att", "rp_btn_att"))]
+    nav = [[_btn(t["rp_btn_brief"], RepCb(k=kind, p=key, s="brief"))]] if showing != "brief" else []
+    return _grid(buttons, nav)
+
+
+def role_pick_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    from app.keyboards.callbacks import RoleCb
+    return _grid([_btn(t["role_boss"], RoleCb(r="boss")), _btn(t["role_storekeeper"], RoleCb(r="storekeeper")),
+                  _btn(t["role_worker"], RoleCb(r="worker"))],
+                 [[_btn(t["btn_admin_back"], RoleCb(r="admin"))]])
+
+
+def shop_reason_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
+    """Bossga yuborilgan kun tahrirlanganda: tuzatish sababi."""
+    return _grid([_btn(t["shop_reason_typo"], ShopCb(action="rsn", idx=0)),
+                  _btn(t["shop_reason_extra"], ShopCb(action="rsn", idx=1)),
+                  _btn(t["shop_reason_return"], ShopCb(action="rsn", idx=2))],
+                 [[_btn(t["shop_btn_cancel"], ShopCb(action="cancel"))]])

@@ -156,3 +156,53 @@ def _build_pdf(items: list[DeficitItem], t: dict[str, str], title: str, count_la
     draw_footer()
     c.save()
     return buffer.getvalue()
+
+
+def _pdf_safe(text: str) -> str:
+    """Shriftda yo'q belgilar (emoji, piktogrammalar) olib tashlanadi; tinish belgilari (— … • −) qoladi."""
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if o < 0x2000 or 0x2000 <= o <= 0x206F or o == 0x2212:
+            out.append(ch)
+    return "".join(out).strip()
+
+
+def build_text_pdf(title: str, lines: list[str], tz: ZoneInfo | None = None) -> bytes:
+    """Oddiy matnli hisobot (oylik yig'ma hisobot ilovasi): sarlavha, qatorlar, sahifa raqami."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    page_w, page_h = A4
+    left, right, bottom = 40, page_w - 40, 50
+    c_header, c_text, c_muted = colors.HexColor("#1F3A5F"), colors.HexColor("#222222"), colors.HexColor("#6B7785")
+    now = pdf_now(tz)
+    page_no = 1
+
+    def footer() -> None:
+        c.setFont(FONT, 8)
+        c.setFillColor(c_muted)
+        c.drawString(left, 26, now)
+        c.drawRightString(right, 26, str(page_no))
+
+    c.setFillColor(c_header)
+    c.setFont(FONT_BOLD, 15)
+    c.drawString(left, page_h - 50, _pdf_safe(title))
+    y = page_h - 78
+    for raw in lines:
+        line = _pdf_safe(raw)
+        bold = bool(line) and not raw.startswith((" ", "•")) and (line.endswith(":") or line.isupper())
+        font, size = (FONT_BOLD, 11) if bold else (FONT, 10)
+        parts = simpleSplit(line, font, size, right - left) or [""]
+        for part in parts:
+            if y < bottom:
+                footer()
+                c.showPage()
+                page_no += 1
+                y = page_h - 50
+            c.setFont(font, size)
+            c.setFillColor(c_header if bold else c_text)
+            c.drawString(left, y, part)
+            y -= 14
+    footer()
+    c.save()
+    return buffer.getvalue()

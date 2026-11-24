@@ -57,6 +57,9 @@ def _is_number(s: str) -> bool:
 
 _NUM_DATE = re.compile(r"^(\d{1,2})[./\-](\d{1,2})(?:[./\-](\d{2}|\d{4}))?$")
 _ISO_DATE = re.compile(r"^(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})$")
+# Google Sheets sana formati: "Nov 24, 2026" / "November 24, 2026"
+_EN_DATE = re.compile(r"^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$")
+_EN_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _TEXT_DATE = re.compile(r"^(\d{1,2})\s+([^\s\d]+)\.?(?:\s+(\d{4}))?\s*(?:г\.?|y\.?|yil)?$", re.IGNORECASE)
 
 
@@ -76,6 +79,9 @@ def parse_cell_date(value: Any, default_year: int) -> date | None:
             if m[3] and len(m[3]) == 2:
                 year += 2000
             return date(year, int(m[2]), int(m[1]))
+        m = _EN_DATE.match(s)
+        if m and m[1][:3].lower() in _EN_MONTHS:
+            return date(int(m[3]), _EN_MONTHS.index(m[1][:3].lower()) + 1, int(m[2]))
         m = _TEXT_DATE.match(s)
         if m:
             month = month_from_text(m[2])

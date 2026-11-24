@@ -69,3 +69,15 @@ class WhCb(CallbackData, prefix="wh"):
                     #       cancel | pm | ncat | unit | pk1 | mn0 | ok | noop
     i: int = 0
     k: str = ""
+
+
+class RepCb(CallbackData, prefix="rp"):
+    """Boss/Admin hisobotlari: bitta xabarni joyida tahrirlash (Batafsil / Qisqacha / bo'limlar)."""
+    k: str          # w (haftalik yig'ma) | m (oylik yig'ma) | fd (kunlik kirim/chiqim)
+    p: str          # davr kaliti (masalan 2026-11-28)
+    s: str = "brief"   # brief | detail | shop | wh | att
+
+
+class RoleCb(CallbackData, prefix="role"):
+    """Admin uchun 🎭 Rolni sinash: vaqtincha boshqa rol ko'rinishiga o'tish."""
+    r: str          # boss | storekeeper | worker | admin (qaytish)

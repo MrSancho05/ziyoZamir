@@ -7,8 +7,9 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 
 from app.core.permissions import Role
-from app.keyboards.inline import attendance_start_kb, shop_enter_kb
-from app.locales.texts import get_texts, month_name
+from app.keyboards.inline import attendance_start_kb, digest_kb, report_toggle_kb, shop_enter_kb
+from app.keyboards.warehouse import flows_reminder_kb
+from app.locales.texts import TEXTS, get_texts, month_name
 from app.services.access import safe_send
 from app.services.attendance import AttendanceService
 from app.services.attendance_grid import is_markable_day
@@ -20,15 +21,19 @@ from app.services.boss_reports import (
     format_shop_period,
     send_to_bosses,
 )
+from app.services.digest import MONTHLY, WEEKLY, DigestData, pdf_lines, render_digest, render_flows_daily
 from app.services.flows import FlowDelta, FlowsService
 from app.services.notify import deliver_once, staff_recipients
+from app.services.reports.pdf import build_text_pdf
 from app.services.shop import ShopService
+from app.services.warehouse import WarehouseService
 from app.services.worker_notify import notify_workers
 from app.storage.attendance_store import AttendanceStore
 from app.storage.pending import PendingReport, PendingReports
+from app.storage.report_cache import ReportCache
 from app.storage.report_log import ReportLog
 from app.storage.users import UserRepository
-from app.utils.schedule import Period, periods
+from app.utils.schedule import Period, last_month_end_due, last_saturday_due, periods
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +52,12 @@ class OpsScheduler:
     - hamma eslatma va muddat o'tgani haqidagi xabarlar BARCHA admin va sklad nazoratchilariga boradi
       (har bir qabul qiluvchi uchun alohida hisobda: yetib bormaganiga qayta uriniladi);
     - bossga boradigan HAR BIR xabarning nusxasi adminga ham yuboriladi (`send_to_bosses`);
-    - 18:30: kunlik kirim/chiqim hisoboti, 19:00: kun faolligi tekshiruvi;
-    - haftalik / oylik / yillik hisobotlar (do'kon xarajati, kirim/chiqim) oldingi davr bilan taqqoslanadi.
+    - 17:30: kirim/chiqim kiritilmagan yoki narxi yo'q tovar bo'lsa — sklad xodimlariga eslatma (tugmalar bilan);
+    - 18:30: kunlik kirim/chiqim hisoboti (📄 Batafsil) yoki "🚨 bugun hech narsa kiritilmadi" ogohlantirishi;
+    - 19:00: kun yopiladi (flows_store);
+    - shanba 20:30: BITTA haftalik yig'ma hisobot (do'kon + ombor + davomat), oy oxiri 20:30: oylik (+ PDF);
+    - yillik hisobotlar (do'kon xarajati, kirim/chiqim) oldingi yil bilan taqqoslanadi;
+    - yakshanba: hech qanday eslatma, muddat yoki "kiritilmagan" ogohlantirishi yuborilmaydi.
 
     Har daqiqa tekshiradi. Bajarilganlar bazada (ReportLog) belgilanadi: qayta ishga tushirishda
     ikki marta yuborilmaydi, kechikkan vazifa ish vaqti ichida keyinroq bajariladi."""
@@ -58,7 +67,8 @@ class OpsScheduler:
                  report_hour: int, shop_reminder_at: time, shop_deadline_at: time,
                  attendance_deadline_at: time, attendance_send_at: time, flows_report_at: time,
                  activity_check_at: time, auto_send_minutes: int, flow_tabs: dict[str, str],
-                 att_store: AttendanceStore) -> None:
+                 att_store: AttendanceStore, warehouse: WarehouseService, report_cache: ReportCache,
+                 flows_reminder_at: time, digest_at: time) -> None:
         self._bot, self._repo, self._log, self._pending = bot, repo, log, pending
         self._attendance, self._shop, self._flows = attendance, shop, flows
         self._tz, self._hour = tz, report_hour
@@ -68,6 +78,10 @@ class OpsScheduler:
         self._att_store = att_store
         self._auto_minutes = auto_send_minutes
         self._tabs = flow_tabs
+        self._wh = warehouse
+        self._cache = report_cache
+        self._flows_rem_at = flows_reminder_at
+        self._digest_at = digest_at
         self._retry_at: dict[str, datetime] = {}
 
     async def run(self) -> None:
@@ -80,8 +94,9 @@ class OpsScheduler:
         now = now or datetime.now(self._tz)
         # Eslatma va muddat xabarlari birinchi turadi: keyingi (sekin) Google Sheets vazifalari ularni kechiktirmasin
         for job in (self._shop_reminder, self._shop_deadline, self._attendance_deadline,
-                    self._auto_send, self._attendance_auto_send,
-                    self._flows_daily, self._activity_check, self._shop_reports, self._flows_reports):
+                    self._auto_send, self._attendance_auto_send, self._flows_reminder,
+                    self._flows_daily, self._activity_check, self._digests, self._shop_reports,
+                    self._flows_reports):
             try:
                 await job(now)
             except Exception:
@@ -233,17 +248,71 @@ class OpsScheduler:
         await self._daily("att_deadline", now, self._att_deadline_at, job)
 
     # ---------------- kirim / chiqim ----------------
+    async def _flows_reminder(self, now: datetime) -> None:
+        """17:30 (dushanba–shanba): bugun kirim/chiqim yo'q YOKI narxi kiritilmagan tovar bo'lsa — eslatma.
+        Hammasi joyida bo'lsa, ortiqcha xabar yuborilmaydi."""
+        async def job() -> bool:
+            today = now.date()
+            if today.weekday() == 6:
+                return True
+            n_in, n_out = await self._wh.day_counts(today)
+            unpriced = len(await self._wh.unpriced())
+            if n_in + n_out > 0 and unpriced == 0:
+                return True
+            deadline = self._flows_at.strftime("%H:%M")
+
+            def build(t: dict[str, str], lang: str) -> str:
+                text = t["flows_reminder"].format(deadline=deadline)
+                if unpriced:
+                    text += t["flows_reminder_unpriced"].format(count=unpriced)
+                return text
+            return await deliver_once(self._bot, self._log, await self._staff(), "flows_reminder_to",
+                                      today.isoformat(), build=build,
+                                      markup=lambda t: flows_reminder_kb(t, unpriced))
+        await self._daily("flows_reminder", now, self._flows_rem_at, job, end=self._flows_at)
+
+    async def _send_flows_daily(self, day: date, deltas: dict[str, FlowDelta]) -> int:
+        """Kunlik kirim/chiqim: qisqacha + 📄 Batafsil (bitta xabar, joyida almashtiriladi)."""
+        try:
+            unpriced = [r for r in await self._wh.unpriced() if r.day == day]
+        except Exception:
+            logger.exception("Narxi yo'q tovarlarni o'qib bo'lmadi")
+            unpriced = []
+        key = day.isoformat()
+        sections = {}
+        for lang in TEXTS:
+            t = get_texts(lang)
+            sections[lang] = render_flows_daily(t, day, deltas, format_flows_daily(t, day, deltas, self._tabs),
+                                                unpriced)
+            await self._cache.save("fd", key, lang, sections[lang])
+        return await send_to_bosses(self._bot, self._repo, lambda t, lang: sections[lang]["brief"],
+                                    markup=lambda t, lang: report_toggle_kb(t, "fd", key))
+
     async def _flows_daily(self, now: datetime) -> None:
         async def job() -> bool:
-            if now.weekday() == 6:
+            today = now.date()
+            if today.weekday() == 6:
                 return True
-            deltas = await self._flows.preview(now.date())
+            deltas = await self._flows.preview(today)
             await self._warn_missing_sheets(deltas)
-            if not any(d.baseline for d in deltas.values() if d.sheet_found):
+            found = [d for d in deltas.values() if d.sheet_found]
+            if not found or not any(d.baseline for d in found):
                 return True                       # birinchi ishga tushish: nusxa 19:00 da olinadi
-            if any(d.new_rows for d in deltas.values()):
-                await send_to_bosses(self._bot, self._repo,
-                                     lambda t, lang: format_flows_daily(t, now.date(), deltas, self._tabs))
+            has_rows = any(d.new_rows for d in found)
+            if not has_rows:
+                try:
+                    has_rows = sum(await self._wh.day_counts(today)) > 0
+                except Exception:
+                    logger.exception("Kunlik yozuvlarni sanab bo'lmadi")
+            if has_rows:
+                await self._send_flows_daily(today, deltas)
+                return True
+            key = today.isoformat()
+            if not await self._log.was_sent("flows_none_alert", key):
+                at = self._flows_at.strftime("%H:%M")
+                await send_to_bosses(self._bot, self._repo, lambda t, lang: t["fd_none_alert"].format(
+                    time=at, date=today.strftime("%d.%m.%Y")))
+                await self._log.mark_sent("flows_none_alert", key)       # 19:00 da takrorlanmasin
             return True
         await self._daily("flows_daily", now, self._flows_at, job, end=self._activity_at)
 
@@ -256,14 +325,16 @@ class OpsScheduler:
             found = [d for d in deltas.values() if d.sheet_found]
             if not found or not any(d.baseline for d in found):
                 return True
+            key = today.isoformat()
             if not any(d.changed for d in found):
-                await self._alert_bosses("alert_flows_none", today)
-            elif (not await self._log.was_sent("flows_daily", today.isoformat())
+                if not await self._log.was_sent("flows_none_alert", key):      # 18:30 da yuborilmagan bo'lsa
+                    await self._alert_bosses("alert_flows_none", today)
+                    await self._log.mark_sent("flows_none_alert", key)
+            elif (not await self._log.was_sent("flows_daily", key)
                   and any(d.new_rows for d in found)):
                 # 18:30 hisoboti yuborilmagan bo'lsa (bot o'chiq bo'lgan), hozir yuboriladi
-                await send_to_bosses(self._bot, self._repo,
-                                     lambda t, lang: format_flows_daily(t, today, deltas, self._tabs))
-                await self._log.mark_sent("flows_daily", today.isoformat())
+                await self._send_flows_daily(today, deltas)
+                await self._log.mark_sent("flows_daily", key)
             return True
         await self._daily("activity", now, self._activity_at, job)
 
@@ -305,8 +376,79 @@ class OpsScheduler:
             return t[f"{prefix}_monthly_title"].format(month=month_name(lang, p.end.month), year=p.end.year)
         return t[f"{prefix}_yearly_title"].format(year=p.end.year)
 
+    # ---------------- 📊 yig'ma hisobotlar: shanba 20:30 va oy oxiri 20:30 ----------------
+    async def _digests(self, now: datetime) -> None:
+        w_due = last_saturday_due(now, self._digest_at).date()           # shanba
+        w_start = w_due - timedelta(days=5)                                # dushanba
+        m_due = last_month_end_due(now, self._digest_at).date()          # oyning oxirgi kuni
+        m_start = m_due.replace(day=1)
+        m_prev_end = m_start - timedelta(days=1)
+        for kind, key, start, end, pstart, pend in (
+                (WEEKLY, w_due.isoformat(), w_start, w_due, w_start - timedelta(days=7), w_due - timedelta(days=7)),
+                (MONTHLY, f"{m_due.year}-{m_due.month:02d}", m_start, m_due, m_prev_end.replace(day=1), m_prev_end)):
+            log_kind = f"digest_{kind}"
+            if await self._log.was_sent(log_kind, key):
+                continue
+            if not await self._log.has_any(log_kind):
+                await self._log.mark_sent(log_kind, key)       # birinchi ishga tushish: eski davr yuborilmaydi
+                logger.info("%s: boshlang'ich belgi qo'yildi (%s)", log_kind, key)
+                continue
+            if now < self._retry_at.get(log_kind, now):
+                continue
+            data = await self._collect_digest(kind, start, end, pstart, pend)
+            if len(data.errors) == 3:
+                logger.warning("%s: hech bir bo'limni o'qib bo'lmadi, 10 daqiqadan keyin qayta uriniladi", log_kind)
+                self._retry_at[log_kind] = now + RETRY_AFTER
+                continue
+            await self._send_digest(kind, key, data)
+            await self._log.mark_sent(log_kind, key)
+
+    async def _collect_digest(self, kind: str, start: date, end: date, pstart: date, pend: date) -> DigestData:
+        d = DigestData(kind=kind, start=start, end=end, prev_start=pstart, prev_end=pend)
+        try:
+            d.shop = await self._shop.period_stats(start, end)
+            d.shop_prev = await self._shop.period_stats(pstart, pend)
+        except Exception:
+            logger.exception("Yig'ma hisobot: do'kon xarajatini o'qib bo'lmadi")
+            d.errors.append("shop")
+        try:
+            d.flows = await self._flows.summary(start, end)
+            d.stock_value = await self._wh.stock_value()
+            d.low = await self._wh.low_items()
+        except Exception:
+            logger.exception("Yig'ma hisobot: ombor ma'lumotini o'qib bo'lmadi")
+            d.errors.append("wh")
+        try:
+            d.att = await self._attendance.period_stats(start, end)
+        except Exception:
+            logger.exception("Yig'ma hisobot: davomatni o'qib bo'lmadi")
+            d.errors.append("att")
+        return d
+
+    async def _send_digest(self, kind: str, key: str, data: DigestData) -> int:
+        sections = {}
+        for lang in TEXTS:
+            sections[lang] = render_digest(get_texts(lang), lang, data)
+            await self._cache.save(kind, key, lang, sections[lang])
+
+        def monthly_pdf(t: dict[str, str], lang: str):
+            title = t["dg_pdf_title"].format(month=month_name(lang, data.end.month), year=data.end.year)
+            try:
+                pdf = build_text_pdf(title, pdf_lines(t, lang, data), self._tz)
+            except Exception:
+                logger.exception("Oylik PDF ni yasab bo'lmadi")
+                return None
+            return pdf, f"hisobot_{key}.pdf", title
+
+        document = monthly_pdf if kind == MONTHLY else None
+        delivered = await send_to_bosses(self._bot, self._repo, lambda t, lang: sections[lang]["brief"],
+                                         markup=lambda t, lang: digest_kb(t, kind, key), document=document)
+        logger.info("Yig'ma hisobot yuborildi (%s %s), bosslar: %d", kind, key, delivered)
+        return delivered
+
     async def _shop_reports(self, now: datetime) -> None:
-        for p in periods(now, self._hour):
+        # haftalik va oylik — yig'ma hisobot ichida; alohida faqat yillik
+        for p in [x for x in periods(now, self._hour) if x.kind == "yearly"]:
             async def fetch(p: Period = p):
                 return (await self._shop.period_stats(p.start, p.end),
                         await self._shop.period_stats(p.prev_start, p.prev_end))
@@ -317,7 +459,7 @@ class OpsScheduler:
             await self._once_period(f"shop_{p.kind}", p.key, now, fetch, render)
 
     async def _flows_reports(self, now: datetime) -> None:
-        for p in periods(now, self._hour):
+        for p in [x for x in periods(now, self._hour) if x.kind == "yearly"]:
             async def fetch(p: Period = p):
                 return (await self._flows.summary(p.start, p.end),
                         await self._flows.summary(p.prev_start, p.prev_end))

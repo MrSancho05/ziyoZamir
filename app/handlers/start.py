@@ -17,7 +17,7 @@ router = Router(name="start")
 async def cmd_start(message: Message, t: dict[str, str], user: User, repo: UserRepository) -> None:
     await message.answer(
         t["welcome"].format(name=escape(user.full_name), role=t[f"role_{user.role.value}"]),
-        reply_markup=main_menu_kb(t, user.role),
+        reply_markup=main_menu_kb(t, user.role, user.real_role),
     )
 
     # Admin botga kirganda kutayotgan so'rovlar haqida eslatiladi

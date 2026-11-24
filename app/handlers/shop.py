@@ -17,12 +17,14 @@ from app.keyboards.inline import (
     shop_cancel_kb,
     shop_edit_kb,
     shop_menu_kb,
+    shop_reason_kb,
     shop_saved_kb,
 )
 from app.locales.texts import all_texts, menu_texts, month_name, weekday_short
 from app.models import User
 from app.services.attendance import LayoutError, TemplateMissingError
 from app.services.boss_reports import format_shop_daily, send_to_bosses
+from app.services.shop_audit import format_audit_notice
 from app.services.payroll import fmt_money
 from app.services.shop import NegativeResultError, NoBlockError, NotEnteredError, ShopService
 from app.services.shop_grid import parse_shop_amount
@@ -145,6 +147,7 @@ async def noop(callback: CallbackQuery) -> None:
 @router.callback_query(ShopCb.filter(F.action == "cancel"))
 async def cancel(callback: CallbackQuery, t: dict[str, str], user: User, store: UserStore) -> None:
     store.clear_awaiting(user.id)
+    store.clear_audit(user.id)
     await callback.message.edit_text(t["shop_cancelled"])
     await callback.answer()
 
@@ -320,8 +323,13 @@ async def edit_again(callback: CallbackQuery, callback_data: ShopCb, t: dict[str
 # ---------------- summani qabul qilish ----------------
 @router.message(AwaitingAmount())
 async def receive_amount(message: Message, t: dict[str, str], user: User, store: UserStore,
-                         shop: ShopService, pending: PendingReports, settings: Settings) -> None:
+                         shop: ShopService, pending: PendingReports, settings: Settings,
+                         repo: UserRepository, bot: Bot) -> None:
     kind, ymd = store.get_awaiting(user.id)
+    if kind == "shop_reason":
+        reason = message.text.strip()[:200]
+        await _apply_audited(message, t, user, store, shop, repo, bot, ymd, reason)
+        return
     if kind == "shop_adj":
         await _receive_adjustment(message, t, user, store, shop, pending, settings, ymd)
         return
@@ -331,6 +339,8 @@ async def receive_amount(message: Message, t: dict[str, str], user: User, store:
         return
 
     day = _from_ymd(ymd)
+    if await _ask_reason_if_sent(message, t, user, store, shop, pending, day, "set", amount):
+        return
     today = _today(settings)
     create = (day.year, day.month) == (today.year, today.month)
     try:
@@ -378,6 +388,8 @@ async def _receive_adjustment(message: Message, t: dict[str, str], user: User, s
     if day is None or day != _today(settings):              # yarim tunda sana o'tib ketgan bo'lishi mumkin
         store.clear_awaiting(user.id)
         await message.answer(t["shop_adj_expired"])
+        return
+    if await _ask_reason_if_sent(message, t, user, store, shop, pending, day, "adj", delta):
         return
     try:
         old, new = await shop.adjust_day(day, delta)
@@ -451,3 +463,94 @@ async def send_to_boss(callback: CallbackQuery, callback_data: ShopCb, t: dict[s
         reply_markup=shop_edit_kb(t, _ymd(day)),
     )
     await callback.answer()
+
+
+# ---------------- Bossga yuborilgan kun tahrirlanganda: sabab + audit xabari ----------------
+REASON_KEYS = ("shop_reason_typo", "shop_reason_extra", "shop_reason_return")
+
+
+async def _ask_reason_if_sent(message: Message, t: dict[str, str], user: User, store: UserStore,
+                              shop: ShopService, pending: PendingReports, day: date, mode: str,
+                              value: int) -> bool:
+    """Kunlik hisobot Bossga allaqachon yuborilgan bo'lsa (kuniga BIR marta), o'zgarish darhol yozilmaydi:
+    avval qisqa sabab so'raladi, keyin yoziladi va Boss/Adminga "✏️ Tuzatish (Audit)" xabari ketadi.
+    True qaytsa — sabab so'raldi (chaqiruvchi to'xtaydi)."""
+    if day is None or await pending.is_sent("shop", day.isoformat()) is not True:
+        return False
+    try:
+        found = await shop.get_day(day)
+    except Exception:
+        logger.exception("Do'kon jadvalini o'qishda xatolik")
+        await message.answer(t["error"])
+        return True
+    old = found[1] if found and found[0] and found[1] is not None else 0
+    new = value if mode == "set" else old + value
+    if new < 0:
+        await message.answer(t["shop_adj_negative"].format(current=fmt_money(old)))
+        return True
+    if new == old:
+        store.clear_awaiting(user.id)
+        await message.answer(t["shop_audit_same"].format(amount=fmt_money(old)))
+        return True
+    store.set_audit(user.id, {"ymd": _ymd(day), "mode": mode, "value": value, "old": old, "new": new})
+    store.set_awaiting(user.id, "shop_reason", _ymd(day))
+    await message.answer(t["shop_reason_prompt"].format(date=day.strftime("%d.%m.%Y"), old=fmt_money(old),
+                                                        new=fmt_money(new)),
+                         reply_markup=shop_reason_kb(t))
+    return True
+
+
+@router.callback_query(ShopCb.filter(F.action == "rsn"))
+async def reason_button(callback: CallbackQuery, callback_data: ShopCb, t: dict[str, str], user: User,
+                        store: UserStore, shop: ShopService, repo: UserRepository, bot: Bot) -> None:
+    audit = store.get_audit(user.id)
+    if audit is None or not 0 <= callback_data.idx < len(REASON_KEYS):
+        await callback.answer(t["shop_adj_expired"], show_alert=True)
+        return
+    await callback.answer("⏳")
+    await _apply_audited(callback.message, t, user, store, shop, repo, bot, audit["ymd"],
+                         t[REASON_KEYS[callback_data.idx]], reason_key=REASON_KEYS[callback_data.idx])
+
+
+async def _apply_audited(message: Message, t: dict[str, str], user: User, store: UserStore, shop: ShopService,
+                         repo: UserRepository, bot: Bot, ymd: int, reason: str,
+                         reason_key: str | None = None) -> None:
+    audit = store.get_audit(user.id)
+    day = _from_ymd(ymd)
+    if not audit or audit.get("ymd") != ymd or day is None or not reason:
+        store.clear_awaiting(user.id)
+        store.clear_audit(user.id)
+        await message.answer(t["shop_adj_expired"])
+        return
+    try:
+        if audit["mode"] == "set":
+            await shop.set_day(day, audit["value"], create=False)
+            old, new = audit["old"], audit["value"]
+        else:
+            old, new = await shop.adjust_day(day, audit["value"])
+    except NegativeResultError as exc:
+        store.clear_awaiting(user.id)
+        store.clear_audit(user.id)
+        await message.answer(t["shop_adj_negative"].format(current=fmt_money(exc.current)))
+        return
+    except (NotEnteredError, NoBlockError, LayoutError, TemplateMissingError):
+        store.clear_awaiting(user.id)
+        store.clear_audit(user.id)
+        await message.answer(t["shop_layout_error"])
+        return
+    except Exception:
+        logger.exception("Do'kon xarajati tuzatishini yozishda xatolik")
+        await message.answer(t["error"])
+        return
+    store.clear_awaiting(user.id)
+    store.clear_audit(user.id)
+    # Asosiy kunlik hisobot qayta YUBORILMAYDI (taymer qayta ishga tushirilmaydi) — faqat tuzatish xabari
+    who = user.full_name
+
+    def build(bt: dict[str, str], lang: str) -> str:
+        return format_audit_notice(bt, day, old, new, who, bt[reason_key] if reason_key else reason)
+
+    delivered = await send_to_bosses(bot, repo, build)
+    await message.answer(t["shop_audit_saved"].format(date=day.strftime("%d.%m.%Y"), old=fmt_money(old),
+                                                      new=fmt_money(new), count=delivered),
+                         reply_markup=shop_edit_kb(t, _ymd(day)))

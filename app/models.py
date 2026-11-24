@@ -24,6 +24,7 @@ class User:
     lang: str
     status: str
     worker_name: str | None = None   # ishchining yo'qlama jadvalidagi ismi (admin bog'laydi)
+    real_role: Role | None = None    # 🎭 Rolni sinash: admin vaqtincha boshqa rolda bo'lsa — haqiqiy roli
 
     @property
     def is_active(self) -> bool:

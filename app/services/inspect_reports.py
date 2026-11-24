@@ -1,7 +1,8 @@
 """Boss/Admin tahlili: do'kon xarajatlari va davomat uchun ikki ko'rinish.
 
 * ``brief``  — egasi uchun eng muhim qisqa xulosa (ortiqcha tafsilotsiz);
-* ``detail`` — to'liq tahlil: taqqoslash, foizlar, ishchilar bo'yicha sanalar va oddiy tilda hisoblash tartibi.
+* ``detail`` — to'liq tahlil: taqqoslash, foizlar va ishchilar bo'yicha sanalar. Hech qanday jadval/matematik
+  formula ko'rsatilmaydi — faqat aniq, odam o'qiydigan raqamlar va davrlar taqqoslanishi.
 
 Google Sheets va Telegramga bog'liq emas: tayyor statistikadan faqat matn yasaydi.
 """
@@ -163,17 +164,6 @@ def _shop_detail(t: dict[str, str], lang: str, rng: Range, cur: ShopStats, prev:
         shown = ", ".join(d.strftime("%d.%m") for d in cur.missing[:20]) + (" …" if len(cur.missing) > 20 else "")
         lines += ["", t["rep_shop_missing"].format(n=len(cur.missing), days=shown)]
 
-    # --- hisoblash tartibi (oddiy tilda) ---
-    steps = [t["an_shop_step_src"], t["an_shop_step_total"].format(total=fmt_money(cur.total))]
-    if rng.tf != TF_DAILY:
-        steps.append(t["an_shop_step_avg"].format(total=fmt_money(cur.total), n=n, avg=fmt_money(avg)))
-    if has_prev:
-        steps.append(t["an_shop_step_diff"].format(cur=fmt_money(cur.total), prev=fmt_money(prev.total),
-                                                   diff=_signed(diff)))
-        if prev.total > 0:
-            steps.append(t["an_shop_step_pct"].format(diff=fmt_money(abs(diff)), prev=fmt_money(prev.total),
-                                                      pct=_pct(abs(diff), prev.total)))
-    lines += ["", *_steps(t, steps)]
     return fit_message("\n".join(lines), t["an_truncated"])
 
 
@@ -240,9 +230,7 @@ def _att_daily(t: dict[str, str], lang: str, rng: Range, stats: PeriodStats) -> 
     if unmarked:
         detail += ["", t["rep_unmarked_title"], ", ".join(escape(n) for n in unmarked)]
     c, e, a, total, rate = _rate(stats)
-    detail += ["", t["rep_sum_rate"].format(rate=rate, came=c, total=total), "",
-               *_steps(t, [t["an_att_step_total"].format(came=c, excused=e, absent=a, total=total),
-                           t["an_att_step_rate"].format(came=c, total=total, rate=rate)])]
+    detail += ["", t["rep_sum_rate"].format(rate=rate, came=c, total=total)]
     return Rendered(brief="\n".join(brief_lines), detail=fit_message("\n".join(detail), t["an_truncated"]))
 
 
@@ -268,18 +256,12 @@ def _att_brief_period(t: dict[str, str], lang: str, rng: Range, stats: PeriodSta
 def _att_detail_period(t: dict[str, str], lang: str, rng: Range, stats: PeriodStats,
                        report: MonthReport | None) -> str:
     title = _att_title(t, lang, rng)
-    came, excused, absent, total, rate = _rate(stats)
-    steps = [t["an_att_step_workdays"].format(work=stats.work_days),
-             t["an_att_step_recorded"].format(n=stats.recorded_days),
-             t["an_att_step_total"].format(came=came, excused=excused, absent=absent, total=total),
-             t["an_att_step_rate"].format(came=came, total=total, rate=rate)]
-    if any(w.saturday_days for w in stats.workers):
-        steps.append(t["pay_sat_rule"].removeprefix("🛠 "))      # raqamli qadamda ikkita emoji bo'lmasin
-    method = _steps(t, steps)
+    # faqat aniq raqamlar: ish kunlari, yo'qlama olingan kunlar (formulalarsiz)
+    method = [t["an_att_days_plain"].format(work=stats.work_days, rec=stats.recorded_days)]
 
     payroll: list[str] = []
     if report is not None and report.tab_found:
-        payroll = [""] + (_payroll_block(t, report).split("\n") + ["", t["an_pay_steps"].format(work=report.work_days)]
+        payroll = [""] + (_payroll_block(t, report).split("\n")
                           if report.pays is not None else [t["pay_no_cols"]])
 
     text = ""

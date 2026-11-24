@@ -4,10 +4,12 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from app.core.permissions import Role
 from app.keyboards.callbacks import LangCb
 from app.keyboards.inline import language_kb
 from app.locales.texts import get_texts
 from app.services.access import guess_lang
+from app.storage.memory import UserStore
 from app.storage.users import UserRepository
 
 
@@ -19,8 +21,9 @@ class AccessMiddleware(BaseMiddleware):
     Til tanlangach so'rov yaratilib, adminlarga yuboriladi (handlers/language.py).
     """
 
-    def __init__(self, repo: UserRepository) -> None:
+    def __init__(self, repo: UserRepository, store: UserStore | None = None) -> None:
         self._repo = repo
+        self._store = store
 
     async def __call__(
         self,
@@ -38,6 +41,13 @@ class AccessMiddleware(BaseMiddleware):
             if user.full_name != tg_user.full_name or user.username != tg_user.username:
                 await self._repo.update_profile(user.id, tg_user.full_name, tg_user.username)
                 user = replace(user, full_name=tg_user.full_name, username=tg_user.username)
+            # 🎭 Rolni sinash: haqiqiy admin vaqtincha boshqa rol ko'rinishida (bazadagi rol o'zgarmaydi)
+            override = self._store.get_role_override(user.id) if self._store is not None else None
+            if override is not None:
+                if user.role == Role.ADMIN:
+                    user = replace(user, role=override, real_role=Role.ADMIN)
+                else:
+                    self._store.clear_role_override(user.id)
             data["user"] = user
             data["lang"] = user.lang
             data["t"] = get_texts(user.lang)

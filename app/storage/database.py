@@ -72,6 +72,26 @@ CREATE TABLE IF NOT EXISTS flow_rows (
     amount INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_flow_rows_day ON flow_rows (sheet, day);
+
+CREATE TABLE IF NOT EXISTS categories (
+    name       TEXT PRIMARY KEY,           -- Google Sheets "Категория" ustuniga yoziladigan nom
+    sort       INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report_cache (
+    kind       TEXT NOT NULL,              -- w (haftalik) | m (oylik) | fd (kunlik kirim/chiqim)
+    report_key TEXT NOT NULL,
+    lang       TEXT NOT NULL,
+    payload    TEXT NOT NULL,              -- {bo'lim: matn} JSON
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (kind, report_key, lang)
+);
 """
 
 

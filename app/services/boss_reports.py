@@ -1,9 +1,11 @@
 """Bossga (va uning nusxasi sifatida Adminga) yuboriladigan hisobotlarning matnlari va yuborish funksiyasi."""
+import logging
 from datetime import date
 from html import escape
-from typing import Callable
+from typing import Any, Callable, Optional, Tuple
 
 from aiogram import Bot
+from aiogram.types import BufferedInputFile
 
 from app.locales.texts import get_texts, month_name, weekday_short
 from app.services.access import safe_send
@@ -17,27 +19,53 @@ from app.services.shop_grid import ShopStats
 from app.storage.users import UserRepository
 from app.utils.text import split_message
 
+logger = logging.getLogger(__name__)
 
-async def _send_parts(bot: Bot, chat_id: int, text: str) -> bool:
+
+async def _send_parts(bot: Bot, chat_id: int, text: str, markup: Any = None) -> bool:
+    """Uzun matn bo'laklarga bo'linadi; tugmalar oxirgi bo'lakka qo'yiladi."""
     ok = True
-    for part in split_message(text):
-        ok = await safe_send(bot, chat_id, part) and ok
+    parts = split_message(text)
+    for i, part in enumerate(parts):
+        extra = {"reply_markup": markup} if markup is not None and i == len(parts) - 1 else {}
+        ok = await safe_send(bot, chat_id, part, **extra) and ok
     return ok
 
 
-async def send_to_bosses(bot: Bot, repo: UserRepository, build: Callable[[dict[str, str], str], str]) -> int:
+async def _send_document(bot: Bot, chat_id: int, doc: Optional[Tuple[bytes, str, str]]) -> None:
+    if not doc:
+        return
+    data, filename, caption = doc
+    try:
+        await bot.send_document(chat_id, BufferedInputFile(data, filename=filename), caption=caption)
+    except Exception:
+        logger.warning("Hujjatni %s ga yuborib bo'lmadi", chat_id, exc_info=True)
+
+
+async def send_to_bosses(bot: Bot, repo: UserRepository, build: Callable[[dict[str, str], str], str],
+                         markup: Optional[Callable[[dict[str, str], str], Any]] = None,
+                         document: Optional[Callable[[dict[str, str], str], Optional[Tuple[bytes, str, str]]]] = None
+                         ) -> int:
     """Matnni har bir bossga uning tilida yuboradi va xuddi shu xabarning NUSXASINI Adminlarga ham yuboradi
     (admin boss ro'yxatida bo'lsa, ikki marta yuborilmaydi). Bossga yetkazilganlar soni qaytariladi
     (admin nusxalari sanalmaydi). Nusxa faqat boss(lar)ga yetib borgandan keyin yuboriladi: shunda xabar
     qayta uriniladigan bo'lsa, admin bir xil xabarni ko'p marta olmaydi."""
     bosses, mirrors = await boss_circle(repo)
     delivered = 0
+
+    async def deliver(user) -> bool:
+        t = get_texts(user.lang)
+        ok = await _send_parts(bot, user.id, build(t, user.lang), markup(t, user.lang) if markup else None)
+        if ok and document is not None:
+            await _send_document(bot, user.id, document(t, user.lang))
+        return ok
+
     for boss in bosses:
-        if await _send_parts(bot, boss.id, build(get_texts(boss.lang), boss.lang)):
+        if await deliver(boss):
             delivered += 1
     if delivered:
         for admin in mirrors:
-            await _send_parts(bot, admin.id, build(get_texts(admin.lang), admin.lang))
+            await deliver(admin)
     return delivered
 
 

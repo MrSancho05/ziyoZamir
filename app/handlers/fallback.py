@@ -25,4 +25,4 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
         return
     logger.info("Handler topilmadi: user_id=%s role=%s text=%r",
                 user.id, user.role.value if user.role else None, message.text)
-    await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role))
+    await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role, user.real_role))

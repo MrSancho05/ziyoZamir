@@ -23,11 +23,17 @@ _MENU = (
 )
 
 
-def main_menu_kb(t: Dict[str, str], role: Optional[Role]) -> ReplyKeyboardMarkup:
+def main_menu_kb(t: Dict[str, str], role: Optional[Role], real_role: Optional[Role] = None) -> ReplyKeyboardMarkup:
+    """`real_role` = ADMIN va `role` boshqa bo'lsa: admin 🎭 rolni sinayapti — "🔙 Adminga qaytish" chiqadi."""
     kb = ReplyKeyboardBuilder()
     for permission, key in _MENU:
         if has_permission(role, permission):
             kb.add(KeyboardButton(text=t[key]))
+    if role == Role.ADMIN:
+        kb.add(KeyboardButton(text=t["btn_role_test"]))
+    kb.add(KeyboardButton(text=t["btn_help"]))
     kb.adjust(2)
+    if real_role == Role.ADMIN and role != Role.ADMIN:
+        kb.row(KeyboardButton(text=t["btn_admin_back"]))    # 1 bosishda admin rejimiga qaytish
     kb.row(KeyboardButton(text=t["btn_lang"]))     # pastki qator: to'liq kenglikda
     return kb.as_markup(resize_keyboard=True)

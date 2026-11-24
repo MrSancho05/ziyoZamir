@@ -29,7 +29,7 @@ async def set_language(callback: CallbackQuery, callback_data: LangCb, repo: Use
     # 1) Faol foydalanuvchi tilni o'zgartiryapti
     if user is not None:
         await repo.set_lang(user.id, code)
-        await callback.message.answer(t["lang_changed"], reply_markup=main_menu_kb(t, user.role))
+        await callback.message.answer(t["lang_changed"], reply_markup=main_menu_kb(t, user.role, user.real_role))
         await callback.answer()
         return
 
