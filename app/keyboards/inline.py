@@ -1,4 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.core.permissions import ROLE_ORDER, Role
 from app.keyboards.callbacks import (
@@ -39,6 +40,23 @@ def _kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _grid(buttons: list[InlineKeyboardButton], nav: list[list[InlineKeyboardButton]] | None = None,
+          cols: int = 2) -> InlineKeyboardMarkup:
+    """Asosiy tugmalar 2 ustunli to'r (adjust(2)); navigatsiya (Orqaga / Bekor qilish) pastda to'liq qatorda."""
+    kb = InlineKeyboardBuilder()
+    for b in buttons:
+        kb.add(b)
+    kb.adjust(cols)
+    for row in nav or []:
+        if row:
+            kb.row(*row)
+    return kb.as_markup()
+
+
+def _short(text: str, limit: int = 24) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def language_kb() -> InlineKeyboardMarkup:
     return _kb([[
         _btn("O'zbekcha 🇺🇿", LangCb(code="uz")),
@@ -48,19 +66,16 @@ def language_kb() -> InlineKeyboardMarkup:
 
 def inspect_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     """"Mahsulotlarni tekshirish": Barcha mahsulotlar / Tanqis mahsulotlar."""
-    return _kb([
-        [_btn(t["btn_all_products"], ProductCb(kind="all"))],
-        [_btn(t["btn_deficit_products"], ProductCb(kind="def"))],
-    ])
+    return _grid([_btn(t["btn_all_products"], ProductCb(kind="all")),
+                  _btn(t["btn_deficit_products"], ProductCb(kind="def"))])
 
 
 def deficit_menu_kb(t: dict[str, str], can_download: bool, kind: str = "def") -> InlineKeyboardMarkup:
     """Ro'yxatni ko'rish hammaga; yuklab olish tugmasi faqat ruxsati borlarga."""
-    rows = [[_btn(t["btn_view"], PageCb(page=0, kind=kind))]]
+    buttons = [_btn(t["btn_view"], PageCb(page=0, kind=kind))]
     if can_download:
-        rows.append([_btn(t["btn_download"], MenuCb(action="download", kind=kind))])
-    rows.append([_btn(t["back"], ProductCb(kind="menu"))])
-    return _kb(rows)
+        buttons.append(_btn(t["btn_download"], MenuCb(action="download", kind=kind)))
+    return _grid(buttons, [[_btn(t["back"], ProductCb(kind="menu"))]])
 
 
 def download_kb(t: dict[str, str], kind: str = "def") -> InlineKeyboardMarkup:
@@ -96,44 +111,36 @@ def pagination_kb(page: int, total_pages: int, t: dict[str, str], kind: str = "d
 
 # ---------- Admin: foydalanuvchilarni boshqarish ----------
 def request_kb(t: dict[str, str], uid: int, with_back: bool = False) -> InlineKeyboardMarkup:
-    rows = [
-        [_btn(t[f"role_{r.value}"], AccessCb(action="approve", uid=uid, role=r.value))]
-        for r in ASSIGNABLE_ON_REQUEST
-    ]
-    rows.append([_btn(t["btn_reject"], AccessCb(action="reject", uid=uid))])
-    if with_back:
-        rows.append([_btn(t["back"], AccessCb(action="list"))])
-    return _kb(rows)
+    buttons = [_btn(t[f"role_{r.value}"], AccessCb(action="approve", uid=uid, role=r.value))
+               for r in ASSIGNABLE_ON_REQUEST]
+    buttons.append(_btn(t["btn_reject"], AccessCb(action="reject", uid=uid)))
+    nav = [[_btn(t["back"], AccessCb(action="list"))]] if with_back else []
+    return _grid(buttons, nav)
 
 
 def users_list_kb(t: dict[str, str], pending: list[User], active: list[User]) -> InlineKeyboardMarkup:
-    rows = [[_btn(f"🆕 {u.full_name}", AccessCb(action="open", uid=u.id))] for u in pending]
-    rows += [
-        [_btn(f"{u.full_name} · {t['role_' + u.role.value]}", AccessCb(action="open", uid=u.id))]
-        for u in active
-    ]
-    return _kb(rows)
+    buttons = [_btn(f"🆕 {_short(u.full_name)}", AccessCb(action="open", uid=u.id)) for u in pending]
+    buttons += [_btn(_short(f"{u.full_name} · {t['role_' + u.role.value]}", 28), AccessCb(action="open", uid=u.id))
+                for u in active]
+    return _grid(buttons)
 
 
 def user_card_kb(t: dict[str, str], target: User, is_self: bool) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
+    buttons: list[InlineKeyboardButton] = []
     if not is_self:
         for r in ROLE_ORDER:
             mark = "✅ " if target.role == r else ""
-            rows.append([_btn(f"{mark}{t['role_' + r.value]}",
-                              AccessCb(action="set", uid=target.id, role=r.value))])
+            buttons.append(_btn(f"{mark}{t['role_' + r.value]}",
+                                AccessCb(action="set", uid=target.id, role=r.value)))
         if target.role == Role.WORKER:
-            rows.append([_btn(t["btn_link"], AccessCb(action="link", uid=target.id))])
-        rows.append([_btn(t["btn_delete"], AccessCb(action="del", uid=target.id))])
-    rows.append([_btn(t["back"], AccessCb(action="list"))])
-    return _kb(rows)
+            buttons.append(_btn(t["btn_link"], AccessCb(action="link", uid=target.id)))
+        buttons.append(_btn(t["btn_delete"], AccessCb(action="del", uid=target.id)))
+    return _grid(buttons, [[_btn(t["back"], AccessCb(action="list"))]])
 
 
 def confirm_delete_kb(t: dict[str, str], uid: int) -> InlineKeyboardMarkup:
-    return _kb([
-        [_btn(t["btn_yes_delete"], AccessCb(action="delok", uid=uid))],
-        [_btn(t["btn_cancel"], AccessCb(action="open", uid=uid))],
-    ])
+    return _grid([_btn(t["btn_yes_delete"], AccessCb(action="delok", uid=uid)),
+                  _btn(t["btn_cancel"], AccessCb(action="open", uid=uid))])
 
 
 def review_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
@@ -145,15 +152,18 @@ def attendance_kb(t: dict[str, str], draft: AttendanceDraft, show_send: bool = T
     """Yo'qlama oynasi. Belgilar darhol saqlanadi, shuning uchun «Saqlash» tugmasi yo'q.
     «Bossga yuborish» faqat shu kun hisoboti hali yuborilmagan bo'lsa ko'rinadi."""
     icons = {None: "⬜", PLUS: "✅", MINUS: "❌", EXCUSED: "🟡"}
-    rows = [
-        [_btn(f"{icons[m]} {name}", AttCb(action="t", idx=i))]
-        for i, (name, m) in enumerate(zip(draft.names, draft.marks))
-    ]
-    rows.append([_btn(t["att_btn_all"], AttCb(action="all"))])
+    names = [_btn(f"{icons[m]} {_short(name, 20)}", AttCb(action="t", idx=i))
+             for i, (name, m) in enumerate(zip(draft.names, draft.marks))]
+    actions = [_btn(t["att_btn_all"], AttCb(action="all"))]
     if show_send:
-        rows.append([_btn(t["att_btn_send"], AttCb(action="send"))])
-    rows.append([_btn(t["btn_cancel"], AttCb(action="cancel"))])
-    return _kb(rows)
+        actions.append(_btn(t["att_btn_send"], AttCb(action="send")))
+    kb = InlineKeyboardBuilder()
+    for b in names:
+        kb.add(b)
+    kb.adjust(2)
+    kb.row(*actions)
+    kb.row(_btn(t["btn_cancel"], AttCb(action="cancel")))
+    return kb.as_markup()
 
 
 def attendance_start_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
@@ -163,8 +173,8 @@ def attendance_start_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
 # ---------- Boss/Admin tahlili: davomat va do'kon xarajatlari ----------
 def analytics_menu_kb(t: dict[str, str], kind: str) -> InlineKeyboardMarkup:
     """Davr tanlash: kunlik, haftalik, oylik, mavsumiy, yillik. kind: att | shop."""
-    return _kb([
-        [_btn(t[key], InspectCb(kind=kind, action="tf", tf=tf))]
+    return _grid([
+        _btn(t[key], InspectCb(kind=kind, action="tf", tf=tf))
         for key, tf in (("an_tf_daily", TF_DAILY), ("an_tf_weekly", TF_WEEKLY), ("an_tf_monthly", TF_MONTHLY),
                         ("an_tf_seasonal", TF_SEASONAL), ("an_tf_yearly", TF_YEARLY))
     ])
@@ -190,10 +200,8 @@ def analytics_result_kb(t: dict[str, str], kind: str, tf: str, season: int, ymd:
 
 
 def attendance_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
-    return _kb([
-        [_btn(t["att_btn_today"], AttCb(action="open"))],
-        [_btn(t["att_btn_past"], AttCb(action="past", idx=0))],
-    ])
+    return _grid([_btn(t["att_btn_today"], AttCb(action="open")),
+                  _btn(t["att_btn_past"], AttCb(action="past", idx=0))])
 
 
 def attendance_calendar_kb(t: dict[str, str], month_label: str, weekday_labels: list[str],
@@ -219,18 +227,13 @@ def shop_menu_kb(t: dict[str, str], today_entered: bool = False) -> InlineKeyboa
     """Bugungi xarajat allaqachon kiritilgan bo'lsa, "kiritish" o'rniga "o'zgartirish" tugmasi chiqadi."""
     first = (_btn(t["shop_btn_adjust_today"], ShopCb(action="adjmenu")) if today_entered
              else _btn(t["shop_btn_today"], ShopCb(action="open")))
-    return _kb([
-        [first],
-        [_btn(t["shop_btn_past"], ShopCb(action="past"))],
-    ])
+    return _grid([first, _btn(t["shop_btn_past"], ShopCb(action="past"))])
 
 
 def shop_adjust_menu_kb(t: dict[str, str], ymd: int) -> InlineKeyboardMarkup:
     """Bitta birlashgan "Qo'shish yoki ayirish" tugmasi (alohida qo'shish/ayirish yo'q)."""
-    return _kb([
-        [_btn(t["shop_btn_add_sub"], ShopCb(action="adj", idx=ymd))],
-        [_btn(t["back"], ShopCb(action="menu"))],
-    ])
+    return _grid([_btn(t["shop_btn_add_sub"], ShopCb(action="adj", idx=ymd))],
+                 [[_btn(t["back"], ShopCb(action="menu"))]])
 
 
 def shop_enter_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
@@ -242,10 +245,8 @@ def shop_cancel_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
 
 
 def shop_saved_kb(t: dict[str, str], ymd: int) -> InlineKeyboardMarkup:
-    return _kb([
-        [_btn(t["shop_btn_send"], ShopCb(action="send", idx=ymd))],
-        [_btn(t["shop_btn_edit"], ShopCb(action="edit", idx=ymd))],
-    ])
+    return _grid([_btn(t["shop_btn_send"], ShopCb(action="send", idx=ymd)),
+                  _btn(t["shop_btn_edit"], ShopCb(action="edit", idx=ymd))])
 
 
 def shop_edit_kb(t: dict[str, str], ymd: int) -> InlineKeyboardMarkup:
@@ -275,14 +276,11 @@ def my_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
 
 
 def link_names_kb(t: dict[str, str], uid: int, names: list[str]) -> InlineKeyboardMarkup:
-    rows = [[_btn(name, AccessCb(action="linkset", uid=uid, role=str(i)))] for i, name in enumerate(names)]
-    rows.append([_btn(t["back"], AccessCb(action="open", uid=uid))])
-    return _kb(rows)
+    buttons = [_btn(_short(name), AccessCb(action="linkset", uid=uid, role=str(i))) for i, name in enumerate(names)]
+    return _grid(buttons, [[_btn(t["back"], AccessCb(action="open", uid=uid))]])
 
 
 # ---------- Top mahsulotlar (faqat admin) ----------
 def top_periods_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
-    return _kb([
-        [_btn(t["btn_top_30"], TopCb(period="30")), _btn(t["btn_top_90"], TopCb(period="90"))],
-        [_btn(t["btn_top_all"], TopCb(period="all"))],
-    ])
+    return _grid([_btn(t["btn_top_30"], TopCb(period="30")), _btn(t["btn_top_90"], TopCb(period="90")),
+                  _btn(t["btn_top_all"], TopCb(period="all"))])

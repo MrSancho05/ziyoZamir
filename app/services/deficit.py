@@ -6,6 +6,7 @@ from app.services.sheets import SheetsClient
 COL_NAME = "Наименование товара"
 COL_STOCK = "Остаток на складе"
 COL_NORM = "Мин. норматив (Минимальный остаток)"
+COL_NORM_SHORT = "Мин. остаток"          # yangi sarlavha nomi
 COL_STATUS = "Статус"
 
 IN_STOCK_MARK = "в наличии"
@@ -25,7 +26,7 @@ def _to_number(value: Any) -> float:
 
 def _is_blank(row: dict[str, Any]) -> bool:
     """Nomi ham, qoldig'i ham, normativi ham, holati ham bo'sh qator (jadvaldagi bo'sh joy)."""
-    return not any(str(row.get(c, "")).strip() for c in (COL_NAME, COL_STOCK, COL_NORM, COL_STATUS))
+    return not any(str(row.get(c, "")).strip() for c in (COL_NAME, COL_STOCK, COL_NORM, COL_NORM_SHORT, COL_STATUS))
 
 
 def _parse_product(row: dict[str, Any]) -> DeficitItem | None:
@@ -33,7 +34,7 @@ def _parse_product(row: dict[str, Any]) -> DeficitItem | None:
     if _is_blank(row):
         return None
     stock = _to_number(row.get(COL_STOCK))
-    norm = _to_number(row.get(COL_NORM))
+    norm = _to_number(row.get(COL_NORM) if COL_NORM in row else row.get(COL_NORM_SHORT))
     status = str(row.get(COL_STATUS, "")).strip().lower()
 
     is_deficit = stock < norm or (status != "" and IN_STOCK_MARK not in status)

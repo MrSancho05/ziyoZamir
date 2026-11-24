@@ -18,6 +18,7 @@ class Permission(str, Enum):
     VIEW_OWN_ATTENDANCE = "view_own_attendance"
     VIEW_EXPENSES = "view_expenses"
     VIEW_TOP_PRODUCTS = "view_top_products"   # "Top mahsulotlar": FAQAT admin
+    MANAGE_WAREHOUSE = "manage_warehouse"     # Kirim / Chiqim / Mahsulotlar: FAQAT admin va sklad nazoratchisi
 
 
 # Rollar tartibi (ro'yxatlarda shu tartibda ko'rsatiladi)
@@ -35,6 +36,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.VIEW_EXPENSES,
         Permission.MARK_EXPENSES,
         Permission.VIEW_TOP_PRODUCTS,
+        Permission.MANAGE_WAREHOUSE,
     }),
     Role.BOSS: frozenset({
         Permission.VIEW_DEFICIT,
@@ -47,6 +49,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.DOWNLOAD_REPORTS,
         Permission.MARK_ATTENDANCE,
         Permission.MARK_EXPENSES,
+        Permission.MANAGE_WAREHOUSE,
     }),
     Role.WORKER: frozenset({
         Permission.VIEW_DEFICIT,

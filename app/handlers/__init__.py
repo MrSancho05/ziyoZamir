@@ -12,10 +12,12 @@ from app.handlers import (
     shop,
     start,
     top_products,
+    warehouse,
 )
 
 router = Router(name="root")
 router.include_routers(
+    warehouse.router,   # Kirim / Chiqim / Mahsulotlar (admin + sklad); ochiq jarayonni menyu/buyruqda yopadi
     start.router,
     language.router,
     admin.router,

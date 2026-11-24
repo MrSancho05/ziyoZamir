@@ -1,0 +1,2 @@
+- Never read, print, or inspect `.env`, `credentials/`, or `data/` files.
+- Ensure `.env`, `credentials/*.json`, and `data/` are in `.gitignore` before any `git commit` or `git push`.

@@ -16,6 +16,7 @@ from app.services.scheduler import ReportScheduler
 from app.services.reports.pdf import register_fonts
 from app.services.shop import ShopService
 from app.services.sheets import SheetsClient
+from app.services.warehouse import WarehouseService
 from app.storage.attendance_store import AttendanceStore
 from app.storage.database import Database
 from app.storage.memory import UserStore
@@ -47,6 +48,9 @@ async def main() -> None:
     shop = ShopService(sheets, settings.shop_tab_format)
     flow_tabs = {"inflow": settings.inflow_tab, "outflow": settings.outflow_tab}
     flows = FlowsService(sheets, FlowStore(db), flow_tabs)
+    warehouse = WarehouseService(sheets, inventory_tab=settings.worksheet_name, inflow_tab=settings.inflow_tab,
+                                 outflow_tab=settings.outflow_tab, directory_tab=settings.directory_tab,
+                                 tz=settings.timezone)
 
     bot = Bot(
         token=settings.bot_token,
@@ -57,7 +61,8 @@ async def main() -> None:
 
     # repo, store, sheets, settings handlerlarga nomi bo'yicha avtomatik uzatiladi
     dp = Dispatcher(repo=repo, store=store, sheets=sheets, settings=settings, attendance=attendance,
-                    shop=shop, pending=pending, att_store=att_store, flows=flows)
+                    shop=shop, pending=pending, att_store=att_store, flows=flows,
+                    warehouse=warehouse)
 
     # outer_middleware: handler topilmasa ham ishlaydi, shuning uchun
     # ruxsatsiz odam hech qaysi xabar bilan o'tib keta olmaydi

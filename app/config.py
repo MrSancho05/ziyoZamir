@@ -27,6 +27,7 @@ class Settings:
     shop_tab_format: str
     inflow_tab: str
     outflow_tab: str
+    directory_tab: str
     shop_reminder_at: time
     shop_deadline_at: time
     attendance_deadline_at: time
@@ -88,6 +89,8 @@ def load_settings() -> Settings:
         shop_tab_format=os.getenv("SHOP_TAB_FORMAT", "Магазин {year}"),
         inflow_tab=os.getenv("INFLOW_TAB", "Приход"),
         outflow_tab=os.getenv("OUTFLOW_TAB", "Расход"),
+        # Do'konlar (Поставщики) va oluvchilar (Ответственные) ro'yxati
+        directory_tab=os.getenv("DIRECTORY_TAB", "Справочник"),
         shop_reminder_at=_parse_hm("SHOP_REMINDER_TIME", "10:00"),
         shop_deadline_at=_parse_hm("SHOP_DEADLINE_TIME", "11:30"),
         attendance_deadline_at=_parse_hm("ATTENDANCE_DEADLINE_TIME", "14:30"),

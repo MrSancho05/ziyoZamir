@@ -61,3 +61,11 @@ class MyCb(CallbackData, prefix="my"):
 class TopCb(CallbackData, prefix="top"):
     """"Top mahsulotlar" (faqat admin): davr tanlash."""
     period: str   # 30 | 90 | all
+
+
+class WhCb(CallbackData, prefix="wh"):
+    """Sklad (Kirim / Chiqim / Mahsulotlar). i — ro'yxatdagi tartib raqami (holatda saqlangan ro'yxat bo'yicha)."""
+    a: str          # amal: cat | cats | pg | p | new | mode | lp | who | whonew | skip | more | rm | dl | cart | save
+                    #       cancel | pm | ncat | unit | pk1 | mn0 | ok | noop
+    i: int = 0
+    k: str = ""
