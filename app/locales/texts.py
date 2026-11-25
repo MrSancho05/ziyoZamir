@@ -1546,3 +1546,50 @@ _V8_TEXTS = {
 }
 for _lang, _texts in _V8_TEXTS.items():
     TEXTS[_lang].update(_texts)
+
+
+# ---------------- karobkadagi miqdor, Kirim da o'zgartirish, narxni belgilash ----------------
+_V9_TEXTS = {
+    "uz": {
+        "wh_pack_prompt": "📦 Bitta karobkada (o'ramda) nechta {unit} bor?",
+        "wh_pack_why": "💡 Agar mahsulot donalab kelsa — <b>1</b> ni bosing. Agar karobkada ko'p dona bo'lsa (masalan, 1 karobkada 100 ta petlya) — o'sha sonni tanlang yoki klaviaturadan yozing. Keyinchalik kirimda karobka sonini kiritganingizda tizim o'zi umumiy donaga ko'paytirib hisoblaydi.",
+        "wh_pack_one": "1 (donalab)",
+        "wh_pack_now": "📦 1 karobka = <b>{pack} {unit}</b>",
+        "wh_err_pack_int": "⚠️ Karobkadagi miqdor butun son bo'lishi kerak (masalan: <code>100</code>). Donalab bo'lsa — <b>1</b>.",
+        "wh_btn_change_pack": "🔄 Karobkadagi miqdorni o'zgartirish ({pack})",
+        "wh_kp_prompt": "🔄 <b>{name}</b>\nHozir: 1 karobka = <b>{pack} {unit}</b>\n\nBu safargi kirimda 1 karobkada nechta {unit} bor?",
+        "wh_kp_scope": "📦 <b>{name}</b>: 1 karobka = <b>{pack} {unit}</b>\n\nBu o'zgarish qayerda qo'llansin?",
+        "wh_btn_pack_once": "✅ Faqat shu kirim uchun",
+        "wh_btn_pack_save": "💾 Mahsulot uchun doimiy saqlash",
+        "wh_kp_once": "✅ Shu kirim uchun o'zgartirildi",
+        "wh_kp_saved": "💾 Mahsulotning karobkadagi miqdori saqlandi",
+        "wh_ef_pack": "📦 Karobkadagi miqdori ({pack} {unit})",
+        "wh_ef_price": "💰 Narxni belgilash / o'zgartirish ({price} so'm)",
+        "wh_ed_card": "✏️ <b>Mahsulot ma'lumotlari</b>\n\n📦 Nomi: <b>{name}</b>\n📏 O'lchov birligi: {unit}\n🏷 Kategoriya: {cat}\n📦 Karobkada: {pack} {unit}\n💰 O'rtacha narx (Средняя цена): {price} so'm\n📉 Мин. норматив: {min} {unit}\n📊 Joriy qoldiq: {stock} {unit}\n\nNimani o'zgartiramiz?",
+        "wh_setprice_prompt": "💰 <b>{name}</b>\nHozirgi o'rtacha narx: <b>{price}</b> so'm\n\n1 {unit} uchun yangi narxni so'mda kiriting (masalan: <code>15000</code>):\n\n<i>Narx «Приход» dagi shu tovarning eng oxirgi narxsiz (bo'lmasa — eng oxirgi) kirimiga yoziladi; «Средняя цена» va «Сумма остатка» formulalari o'zi qayta hisoblaydi.</i>",
+        "wh_setprice_done": "✅ <b>Narx yangilandi: {name}</b>\n\n📅 Kirim: {date} · {qty} {unit}\n💰 Narx: {old} → <b>{price}</b> so'm\n📊 Yangi o'rtacha narx (Средняя цена): <b>{avg}</b> so'm\n<i>O'rtacha narx shu tovarning barcha kirimlari ({count} ta) bo'yicha hisoblanadi.</i>",
+        "wh_setprice_nohist": "ℹ️ «{name}» bo'yicha hali birorta kirim yo'q — o'rtacha narx kirimlardan hisoblanadi.\n💰 <b>{price}</b> so'm eslab qolindi: keyingi 📥 Kirim da «💰 Oxirgi narx» tugmasi bo'lib chiqadi.",
+    },
+    "ru": {
+        "wh_pack_prompt": "📦 Сколько {unit} в одной коробке (упаковке)?",
+        "wh_pack_why": "💡 Если товар штучный — нажмите <b>1</b>. Если в коробке несколько штук (например, 100 шт. в коробке) — выберите число или введите вручную.",
+        "wh_pack_one": "1 (штучно)",
+        "wh_pack_now": "📦 1 коробка = <b>{pack} {unit}</b>",
+        "wh_err_pack_int": "⚠️ Количество в коробке должно быть целым числом (например: <code>100</code>). Штучный товар — <b>1</b>.",
+        "wh_btn_change_pack": "🔄 Изменить кол-во в коробке ({pack})",
+        "wh_kp_prompt": "🔄 <b>{name}</b>\nСейчас: 1 коробка = <b>{pack} {unit}</b>\n\nСколько {unit} в одной коробке в этом приходе?",
+        "wh_kp_scope": "📦 <b>{name}</b>: 1 коробка = <b>{pack} {unit}</b>\n\nГде применить изменение?",
+        "wh_btn_pack_once": "✅ Только для этого прихода",
+        "wh_btn_pack_save": "💾 Сохранить для товара",
+        "wh_kp_once": "✅ Изменено для этого прихода",
+        "wh_kp_saved": "💾 Количество в коробке сохранено для товара",
+        "wh_ef_pack": "📦 Кол-во в коробке ({pack} {unit})",
+        "wh_ef_price": "💰 Указать / изменить цену ({price} сум)",
+        "wh_ed_card": "✏️ <b>Данные товара</b>\n\n📦 Название: <b>{name}</b>\n📏 Ед. изм.: {unit}\n🏷 Категория: {cat}\n📦 В коробке: {pack} {unit}\n💰 Средняя цена: {price} сум\n📉 Мин. норматив: {min} {unit}\n📊 Текущий остаток: {stock} {unit}\n\nЧто изменить?",
+        "wh_setprice_prompt": "💰 <b>{name}</b>\nТекущая средняя цена: <b>{price}</b> сум\n\nВведите новую цену за 1 {unit} в сумах (например: <code>15000</code>):\n\n<i>Цена записывается в последний приход этого товара без цены (если таких нет — в последний приход) в «Приход»; формулы «Средняя цена» и «Сумма остатка» пересчитаются сами.</i>",
+        "wh_setprice_done": "✅ <b>Цена обновлена: {name}</b>\n\n📅 Приход: {date} · {qty} {unit}\n💰 Цена: {old} → <b>{price}</b> сум\n📊 Новая средняя цена: <b>{avg}</b> сум\n<i>Средняя цена считается по всем приходам товара ({count}).</i>",
+        "wh_setprice_nohist": "ℹ️ По «{name}» ещё не было приходов — средняя цена считается по приходам.\n💰 <b>{price}</b> сум запомнено: при следующем 📥 Приходе появится кнопка «💰 Посл. цена».",
+    },
+}
+for _lang, _texts in _V9_TEXTS.items():
+    TEXTS[_lang].update(_texts)

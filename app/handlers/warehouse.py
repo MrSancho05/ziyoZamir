@@ -90,6 +90,9 @@ class WhSt(StatesGroup):
     ed_min = State()         # ✏️ yangi Мин. норматив kutilmoqda
     over = State()           # 📤 qoldiqdan ko'p chiqim: tanlov kutilmoqda
     seq_price = State()      # 💰 narxlarni birma-bir kiritish
+    kir_pack = State()       # 📥 Kirim davomida karobkadagi miqdorni o'zgartirish
+    ed_pack = State()        # ✏️ karobkadagi miqdor (В упаковке)
+    ed_price = State()       # ✏️ 💰 narxni belgilash / o'zgartirish
 
 
 # ---------------- yordamchilar ----------------
@@ -435,6 +438,10 @@ async def _ask_qty(target: Message, t: Dict[str, str], state: FSMContext, edit: 
     key = "wh_qty_prompt_out" if data.get("flow") == FLOW_OUT else "wh_qty_prompt_in"
     text = t[key].format(name=escape(cur["name"]), stock=_n(cur["stock"] - taken), unit=escape(unit),
                          base_unit=escape(cur["unit"]), tip=_qty_tip(t, cur))
+    if data.get("flow") == FLOW_IN:
+        text += "\n" + t["wh_pack_now"].format(pack=_n(cur.get("pack") or 1), unit=escape(cur["unit"]))
+        await _show(target, text, kb.qty_in_kb(t, _n(cur.get("pack") or 1)), edit)
+        return
     await _show(target, text, kb.cancel_kb(t), edit)
 
 
@@ -903,7 +910,7 @@ async def np_cat_text(message: Message, t: Dict[str, str], state: FSMContext,
 async def _np_ask_pack(target: Message, t: Dict[str, str], state: FSMContext, unit: str, edit: bool) -> None:
     await _np_update(state, unit=unit)
     await state.set_state(WhSt.np_pack)
-    await _show(target, t["wh_np_pack"].format(unit=escape(unit)), kb.quick_value_kb(t, "pk1", "1"), edit)
+    await _show(target, _pack_prompt(t, unit), kb.pack_kb(t, "pkv"), edit)
 
 
 @router.callback_query(WhSt.np_unit, WhCb.filter(F.a == "unit"))
@@ -942,9 +949,9 @@ async def np_pack_default(callback: CallbackQuery, t: Dict[str, str], state: FSM
 async def np_pack_text(message: Message, t: Dict[str, str], state: FSMContext,
                        warehouse: WarehouseService) -> None:
     value = parse_number(message.text)
-    error = _number_error(t, message.text, value, "pack")
+    error = _pack_error(t, message.text, value)
     if error:
-        await message.answer(error, reply_markup=kb.quick_value_kb(t, "pk1", "1"))
+        await message.answer(error, reply_markup=kb.pack_kb(t, "pkv"))
         return
     await _np_ask_min(message, t, state, value, edit=False, warehouse=warehouse)
 
@@ -1498,7 +1505,13 @@ async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContex
             await _show_edit_card(msg, t, state, warehouse, data["ed_name"], edit=True)
         else:
             await _show_categories(msg, t, state, warehouse, edit=True)
-    elif st in (WhSt.ed_unit.state, WhSt.ed_cat.state, WhSt.ed_min.state):
+    elif st == WhSt.kir_pack.state:
+        if float(cur.get("pack") or 1) > 1:
+            await _show_mode(msg, t, state, edit=True)
+        else:
+            await _ask_qty(msg, t, state, edit=True)
+    elif st in (WhSt.ed_unit.state, WhSt.ed_cat.state, WhSt.ed_min.state, WhSt.ed_pack.state,
+                WhSt.ed_price.state):
         await _show_edit_card(msg, t, state, warehouse, data.get("ed_name", ""), edit=True)
     elif st == WhSt.ed_card.state:
         await state.clear()
@@ -1648,11 +1661,14 @@ async def _show_edit_card(target: Message, t: Dict[str, str], state: FSMContext,
     data = await state.get_data()
     await state.set_state(WhSt.ed_card)
     await state.update_data(ed_name=product.name, rn={"old": product.name}, view="item")
+    price = _n(product.avg_price) if product.avg_price else "—"
     text = t["wh_ed_card"].format(name=escape(product.name), unit=escape(product.unit),
                                   cat=escape(cat_label(product.category, _lang(t)) if product.category else "—"),
-                                  min=_n(product.min_stock), stock=_n(product.stock))
+                                  min=_n(product.min_stock), stock=_n(product.stock), pack=_n(product.pack),
+                                  price=price)
     can_continue = data.get("cont_flow") if data.get("last_np") == product.name else None
-    await _show(target, text, kb.edit_kb(t, can_continue), edit)
+    await _show(target, text, kb.edit_kb(t, can_continue, pack=_n(product.pack), unit=product.unit, price=price),
+                edit)
 
 
 @router.callback_query(WhCb.filter(F.a == "ed"))
@@ -1678,6 +1694,14 @@ async def edit_field(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, 
     product = await warehouse.product(name)
     if product is None:
         await _show(callback.message, t["wh_not_in_catalog"], None, True)
+        return
+    if callback_data.k == "pack":
+        await state.set_state(WhSt.ed_pack)
+        await _show(callback.message, _pack_prompt(t, product.unit) + "\n\n" + t["wh_pack_now"].format(
+            pack=_n(product.pack), unit=escape(product.unit)), kb.pack_kb(t, "epk"), True)
+        return
+    if callback_data.k == "price":
+        await _ask_edit_price(callback.message, t, state, product, edit=True)
         return
     if callback_data.k == "name":
         await state.update_data(rn={"old": name})
@@ -2003,6 +2027,10 @@ async def lookup_action(callback: CallbackQuery, callback_data: WhCb, t: Dict[st
     if callback_data.k == "ed":
         await _show_edit_card(callback.message, t, state, warehouse, product.name, edit=False)
         return
+    if callback_data.k == "pr":
+        await state.update_data(ed_name=product.name)
+        await _ask_edit_price(callback.message, t, state, product, edit=False)
+        return
     await state.update_data(flow=FLOW_OUT if callback_data.k == "out" else FLOW_IN, cart=[])
     await _start_item(callback.message, t, state, product, edit=False)
 
@@ -2018,6 +2046,160 @@ async def lookup_add(callback: CallbackQuery, t: Dict[str, str], state: FSMConte
     await state.clear()
     await state.update_data(np={"ret": None}, cart=[])
     await _np_set_name(callback.message, t, state, warehouse, query, edit=False)
+
+
+# ---------------- 📦 karobkadagi miqdor (В упаковке) ----------------
+def _pack_prompt(t: Dict[str, str], unit: str) -> str:
+    return t["wh_pack_prompt"].format(unit=escape(unit or "шт")) + "\n\n" + t["wh_pack_why"]
+
+
+def _pack_error(t: Dict[str, str], raw: str, value: Optional[float]) -> Optional[str]:
+    """Karobkadagi miqdor: butun son, 0 dan katta."""
+    error = _number_error(t, raw, value, "pack")
+    if error:
+        return error
+    if not float(value).is_integer():
+        return t["wh_err_pack_int"]
+    return None
+
+
+@router.callback_query(WhSt.np_pack, WhCb.filter(F.a == "pkv"))
+async def np_pack_preset(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                         warehouse: WarehouseService) -> None:
+    await callback.answer()
+    await _np_ask_min(callback.message, t, state, float(max(1, callback_data.i)), edit=True, warehouse=warehouse)
+
+
+# ---- ✏️ tahrirlash: karobkadagi miqdor ----
+async def _apply_pack(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                      value: float) -> None:
+    await _apply_edit(target, t, state, warehouse, pack=value)
+
+
+@router.callback_query(WhSt.ed_pack, WhCb.filter(F.a == "epk"))
+async def edit_pack_preset(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                           warehouse: WarehouseService) -> None:
+    await callback.answer("⏳")
+    await _apply_pack(callback.message, t, state, warehouse, float(max(1, callback_data.i)))
+
+
+@router.message(WhSt.ed_pack, F.text)
+async def edit_pack_text(message: Message, t: Dict[str, str], state: FSMContext,
+                         warehouse: WarehouseService) -> None:
+    value = parse_number(message.text)
+    error = _pack_error(t, message.text, value)
+    if error:
+        await message.answer(error, reply_markup=kb.pack_kb(t, "epk"))
+        return
+    await _apply_pack(message, t, state, warehouse, value)
+
+
+# ---- 📥 Kirim davomida: karobkadagi miqdorni shu yerning o'zida o'zgartirish ----
+@router.callback_query(StateFilter(WhSt.mode, WhSt.qty), WhCb.filter(F.a == "chpk"))
+async def kirim_change_pack(callback: CallbackQuery, t: Dict[str, str], state: FSMContext) -> None:
+    data = await state.get_data()
+    cur = data.get("cur") or {}
+    if not cur or data.get("flow") != FLOW_IN:
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(WhSt.kir_pack)
+    await state.update_data(kp_val=None)
+    await _show(callback.message, t["wh_kp_prompt"].format(name=escape(cur["name"]), pack=_n(cur.get("pack") or 1),
+                                                           unit=escape(cur["unit"])) + "\n\n" + t["wh_pack_why"],
+                kb.pack_kb(t, "kpk"), True)
+
+
+async def _kirim_pack_scope(target: Message, t: Dict[str, str], state: FSMContext, value: float,
+                            edit: bool) -> None:
+    cur = (await state.get_data()).get("cur") or {}
+    await state.update_data(kp_val=value)
+    await _show(target, t["wh_kp_scope"].format(name=escape(cur.get("name", "")), pack=_n(value),
+                                                unit=escape(cur.get("unit", ""))), kb.pack_scope_kb(t), edit)
+
+
+@router.callback_query(WhSt.kir_pack, WhCb.filter(F.a == "kpk"))
+async def kirim_pack_preset(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str],
+                            state: FSMContext) -> None:
+    await callback.answer()
+    await _kirim_pack_scope(callback.message, t, state, float(max(1, callback_data.i)), edit=True)
+
+
+@router.message(WhSt.kir_pack, F.text)
+async def kirim_pack_text(message: Message, t: Dict[str, str], state: FSMContext) -> None:
+    value = parse_number(message.text)
+    error = _pack_error(t, message.text, value)
+    if error:
+        await message.answer(error, reply_markup=kb.pack_kb(t, "kpk"))
+        return
+    await _kirim_pack_scope(message, t, state, value, edit=False)
+
+
+@router.callback_query(WhSt.kir_pack, WhCb.filter(F.a == "kps"))
+async def kirim_pack_apply(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                           warehouse: WarehouseService) -> None:
+    data = await state.get_data()
+    cur, value = dict(data.get("cur") or {}), data.get("kp_val")
+    if not cur or not value:
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    if callback_data.k == "save":
+        try:
+            await warehouse.update_product(cur["name"], pack=value)     # mahsulotning standart qiymati ham
+        except Exception:
+            logger.exception("Karobkadagi miqdorni saqlab bo'lmadi")
+            await callback.answer(t["wh_save_error"], show_alert=True)
+            return
+    await callback.answer(t["wh_kp_saved"] if callback_data.k == "save" else t["wh_kp_once"])
+    cur["pack"] = value
+    cur["mode"] = "unit" if value <= 1 else cur.get("mode", "unit")
+    await state.update_data(cur=cur, kp_val=None)
+    if value > 1:
+        await _show_mode(callback.message, t, state, edit=True)      # karobka / dona qayta tanlanadi
+    else:
+        await _ask_qty(callback.message, t, state, edit=True)
+
+
+# ---------------- 💰 narxni belgilash / o'zgartirish ----------------
+async def _ask_edit_price(target: Message, t: Dict[str, str], state: FSMContext, product: Product,
+                          edit: bool) -> None:
+    await state.set_state(WhSt.ed_price)
+    await state.update_data(ed_name=product.name)
+    current = _n(product.avg_price) if product.avg_price else "—"
+    await _show(target, t["wh_setprice_prompt"].format(name=escape(product.name), unit=escape(product.unit),
+                                                       price=current), kb.cancel_kb(t), edit)
+
+
+@router.message(WhSt.ed_price, F.text)
+async def edit_price_text(message: Message, t: Dict[str, str], state: FSMContext,
+                          warehouse: WarehouseService) -> None:
+    value = parse_number(message.text)
+    error = _number_error(t, message.text, value, "price")
+    if error:
+        await message.answer(error, reply_markup=kb.cancel_kb(t))
+        return
+    name = (await state.get_data()).get("ed_name", "")
+    try:
+        res = await warehouse.set_product_price(name, value)
+    except NotFoundError:
+        await message.answer(t["wh_not_in_catalog"])
+        return
+    except Exception:
+        logger.exception("Narxni yozib bo'lmadi")
+        await message.answer(t["wh_save_error"])
+        return
+    if res.get("no_history"):
+        await message.answer(t["wh_setprice_nohist"].format(name=escape(name), price=_n(value)))
+    else:
+        if res.get("was_unpriced"):
+            await _resolve_unpriced(warehouse, {"name": res["name"], "qty": res["qty"],
+                                                "iso": res["day"].isoformat() if res.get("day") else ""})
+        await message.answer(t["wh_setprice_done"].format(
+            name=escape(name), price=_n(value), date=res["day"].strftime("%d.%m.%Y") if res.get("day") else "—",
+            qty=_n(res["qty"]), unit=escape(res.get("unit") or ""),
+            old=_n(res["old_price"]) if res.get("old_price") else "—",
+            avg=_n(res["avg"]) if res.get("avg") is not None else "—", count=res.get("count", 1)))
+    await _show_edit_card(message, t, state, warehouse, name, edit=False)
 
 
 # ---------------- eskirgan tugmalar ----------------

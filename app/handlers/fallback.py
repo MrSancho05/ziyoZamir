@@ -70,13 +70,19 @@ async def _lookup(message: Message, t: dict[str, str], user: User, state: FSMCon
         cards.append(t["wh_lookup_card"].format(
             name=escape(p.name), cat=escape(cat_label(p.category, lang) if p.category else "—"),
             stock=_n(p.stock), unit=escape(p.unit), min=_n(p.min_stock), price=_n(p.avg_price), low=low))
-    text = t["wh_lookup_found"].format(text=escape(query), n=len(hits)) + "\n\n" + "\n\n".join(cards)
-    markup: Optional[object] = None
-    if actions:
-        await state.clear()
-        await state.update_data(lookup=hits)
-        markup = wkb.lookup_kb(t, hits)
-    await message.answer(text, reply_markup=markup)
+    head = t["wh_lookup_found"].format(text=escape(query), n=len(hits))
+    if not actions:                                    # boss: bitta xabar, tugmasiz
+        await message.answer(head + "\n\n" + "\n\n".join(cards))
+        return True
+    await state.clear()
+    await state.update_data(lookup=hits)
+    if len(cards) == 1:
+        await message.answer(head + "\n\n" + cards[0], reply_markup=wkb.lookup_kb(t, 0))
+        return True
+    # bir nechta mahsulot: har bir karta alohida xabar — ixcham [📥] [📤] [✏️] [💰] qaysi tovarga tegishli aniq
+    await message.answer(head)
+    for i, card in enumerate(cards):
+        await message.answer(card, reply_markup=wkb.lookup_kb(t, i))
     return True
 
 

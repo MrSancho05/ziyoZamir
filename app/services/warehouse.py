@@ -244,6 +244,7 @@ class WarehouseService:
         self._directory_ts = 0.0
         self.cat_store = None          # storage.categories.CategoryStore (main.py da beriladi)
         self.norm_store = None         # storage.norms.NormMemory: oxirgi kiritilgan Мин. остаток (main.py)
+        self._price_memory: Dict[str, float] = {}     # kirimi yo'q mahsulot uchun belgilangan narx (tavsiya)
         self.product_log = None        # storage.tracking.ProductLog: 🆕 yangi qo'shilgan mahsulotlar
         self.unpriced_store = None     # storage.tracking.UnpricedStore: narxsiz kirimlar nazorati
         self.other = None              # services.other_expenses.OtherExpensesService: 🧾 Boshqa xarajatlar
@@ -371,7 +372,8 @@ class WarehouseService:
         return self._flows
 
     async def last_price(self, name: str) -> Optional[float]:
-        return (await self._flow_cache()).last_price.get(_key(name))
+        """Приход dagi oxirgi narx; kirim hali bo'lmasa — 💰 Narxni belgilash orqali eslab qolingan narx."""
+        return (await self._flow_cache()).last_price.get(_key(name)) or self._price_memory.get(_key(name))
 
     # ---------- Справочник: 4 ustunli asosiy ma'lumotnoma ----------
     # Ед. изм. | Мастера | Наименование товара | Ответственные — hammasi botdan boshqariladi (Table4 ichida).
@@ -1077,6 +1079,40 @@ class WarehouseService:
             logger.warning("Yangi mahsulotni Справочник ga yozib bo'lmadi", exc_info=True)
         return row
 
+    # ---------- 💰 mahsulot narxini belgilash / o'zgartirish ----------
+    def _price_target_sync(self, name: str) -> Optional[Dict[str, Any]]:
+        """Приход dagi shu mahsulotning qaysi qatoriga narx yoziladi: eng oxirgi NARXSIZ qator, bo'lmasa eng
+        oxirgi qator. Qator yo'q bo'lsa None."""
+        values = self._values(self._ws(self.inflow_tab))
+        if not values:
+            return None
+        h = _header_index(values, "Наименование товара", "наименование")
+        c = self._inflow_cols(values[h])
+        rows = [(i, r) for i, r in enumerate(values[h + 1:], start=h + 2) if _key(_cell(r, c["name"])) == _key(name)]
+        if not rows:
+            return None
+        unpriced = [(i, r) for i, r in rows if not parse_number(_cell(r, c["price"]))]
+        row, r = (unpriced or rows)[-1]
+        return {"row": row, "name": str(_cell(r, c["name"])).strip(), "qty": parse_number(_cell(r, c["qty"])) or 0.0,
+                "old_price": parse_number(_cell(r, c["price"])), "unit": str(_cell(r, c["unit"])).strip(),
+                "day": to_date(_cell(r, c["date"]), self.today().year), "was_unpriced": bool(unpriced),
+                "count": len(rows)}
+
+    async def set_product_price(self, name: str, price: float) -> Dict[str, Any]:
+        """Mahsulot narxi Приход orqali yangilanadi — «Остатки и Расходы» formulalari (SUMIFS, Средняя цена,
+        Сумма остатка) o'zgartirilmaydi. Eng oxirgi narxsiz (bo'lmasa eng oxirgi) kirim qatoriga narx yoziladi.
+        Kirim umuman bo'lmasa — hech narsa yozilmaydi ("no_history"): 0 miqdorli qator o'rtacha narxga ta'sir
+        qilmaydi, narx esa keyingi Kirim da tavsiya sifatida eslab qolinadi."""
+        target = await self._sheets.run(self._price_target_sync, name)
+        if target is None:
+            self._price_memory[_key(name)] = price
+            return {"no_history": True, "price": price}
+        await self._sheets.run(self._set_price_sync, target["row"], target["name"], price)
+        self.invalidate()
+        product = await self.product(name, force=True)
+        target.update(price=price, avg=product.avg_price if product else None, no_history=False)
+        return target
+
     # ---------- ✏️ mahsulot ma'lumotlarini tahrirlash ----------
     def _update_fields_sync(self, name: str, fields: Dict[str, Any]) -> None:
         """Остатки и Расходы dagi mahsulot qatori: unit / category / min (ustunlar sarlavha bo'yicha topiladi)."""
@@ -1092,15 +1128,15 @@ class WarehouseService:
             if value is None or cols.get(key) is None:
                 continue
             data.append({"range": rowcol_to_a1(row, cols[key] + 1),
-                         "values": [[num_out(value) if key == "min" else value]]})
+                         "values": [[num_out(value) if key in ("min", "pack") else value]]})
         if data:
             ws.batch_update(data, value_input_option=ValueInputOption.user_entered)
 
     async def update_product(self, name: str, unit: Optional[str] = None, category: Optional[str] = None,
-                             min_stock: Optional[float] = None) -> None:
-        """Birlik, kategoriya yoki Мин. остаток. Yangi birlik Справочник «Ед. изм.» ro'yxatiga ham qo'shiladi."""
+                             min_stock: Optional[float] = None, pack: Optional[float] = None) -> None:
+        """Birlik, kategoriya, Мин. остаток yoki «В упаковке (шт)». Yangi birlik Справочник «Ед. изм.» ga ham."""
         await self._sheets.run(self._update_fields_sync, name,
-                               {"unit": unit, "category": category, "min": min_stock})
+                               {"unit": unit, "category": category, "min": min_stock, "pack": pack})
         if unit:
             try:
                 await self.add_directory_value(UNIT_KIND, unit)      # bor bo'lsa — hech narsa qilinmaydi

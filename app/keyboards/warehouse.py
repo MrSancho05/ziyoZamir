@@ -83,8 +83,32 @@ def search_kb(t: Dict[str, str], names: Sequence[str], allow_new: bool,
 
 
 def mode_kb(t: Dict[str, str], pack: str, unit: str) -> InlineKeyboardMarkup:
+    """📥 Kirim: karobka yoki dona + shu kirim uchun karobkadagi miqdorni o'zgartirish."""
     return grid([_b(t["wh_btn_pack"].format(pack=pack, unit=unit), "mode", k="pack"),
-                 _b(t["wh_btn_unit"].format(unit=unit), "mode", k="unit")], [cancel_row(t)])
+                 _b(t["wh_btn_unit"].format(unit=unit), "mode", k="unit")],
+                [[_b(t["wh_btn_change_pack"].format(pack=pack), "chpk")], cancel_row(t)])
+
+
+PACK_PRESETS = ((1, 10, 20, 50), (100, 200, 500, 1000))
+
+
+def pack_kb(t: Dict[str, str], action: str) -> InlineKeyboardMarkup:
+    """Karobkadagi miqdor: 2 qatorli tezkor tanlov + ⬅️ Orqaga / ❌ Bekor qilish (son yozish ham mumkin)."""
+    kb = InlineKeyboardBuilder()
+    for row in PACK_PRESETS:
+        kb.row(*[_b(t["wh_pack_one"] if v == 1 else str(v), action, v) for v in row])
+    kb.row(*cancel_row(t))
+    return kb.as_markup()
+
+
+def qty_in_kb(t: Dict[str, str], pack: str) -> InlineKeyboardMarkup:
+    """📥 Kirim miqdori: karobkadagi miqdorni shu yerning o'zida o'zgartirish tugmasi bilan."""
+    return grid([], [[_b(t["wh_btn_change_pack"].format(pack=pack), "chpk")], cancel_row(t)])
+
+
+def pack_scope_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
+    return grid([], [[_b(t["wh_btn_pack_once"], "kps", k="once")], [_b(t["wh_btn_pack_save"], "kps", k="save")],
+                     cancel_row(t)])
 
 
 def price_kb(t: Dict[str, str], last_price: Optional[str], allow_later: bool = True) -> InlineKeyboardMarkup:
@@ -178,13 +202,10 @@ def seq_kb(t: Dict[str, str], last_price: Optional[str]) -> InlineKeyboardMarkup
     return grid(buttons, [cancel_row(t)], cols=1)
 
 
-def lookup_kb(t: Dict[str, str], names: Sequence[str]) -> InlineKeyboardMarkup:
-    """Erkin matn bilan topilgan mahsulotlar: har biriga 📥 Kirim | 📤 Chiqim | ✏️ Tahrirlash."""
-    rows: List[List[InlineKeyboardButton]] = []
-    for i, n in enumerate(names):
-        rows.append([_b(f"📥 {_short(n, 14)}", "lk", i, k="in"), _b("📤", "lk", i, k="out"),
-                     _b("✏️", "lk", i, k="ed")])
-    return grid([], rows)
+def lookup_kb(t: Dict[str, str], index: int) -> InlineKeyboardMarkup:
+    """Topilgan mahsulot kartasi ostida faqat emoji: [📥] [📤] [✏️] [💰] (har bir karta — alohida xabar)."""
+    return grid([], [[_b("📥", "lk", index, k="in"), _b("📤", "lk", index, k="out"), _b("✏️", "lk", index, k="ed"),
+                      _b("💰", "lk", index, k="pr")]])
 
 
 def lookup_add_kb(t: Dict[str, str], query: str) -> InlineKeyboardMarkup:
@@ -234,8 +255,11 @@ def created_kb(t: Dict[str, str], flow: str) -> InlineKeyboardMarkup:
 
 
 # ---------- ✏️ mahsulot ma'lumotlari ----------
-def edit_kb(t: Dict[str, str], can_continue: Optional[str] = None) -> InlineKeyboardMarkup:
-    nav: List[List[InlineKeyboardButton]] = []
+def edit_kb(t: Dict[str, str], can_continue: Optional[str] = None, pack: str = "1", unit: str = "",
+            price: str = "—") -> InlineKeyboardMarkup:
+    nav: List[List[InlineKeyboardButton]] = [
+        [_b(t["wh_ef_pack"].format(pack=pack, unit=unit), "ef", k="pack")],
+        [_b(t["wh_ef_price"].format(price=price), "ef", k="price")]]
     if can_continue:
         nav.append([_b(t["wh_btn_cont_out"] if can_continue == "out" else t["wh_btn_cont_in"], "cont")])
     nav += [[_b(t["wh_btn_back"], "pmm")], cancel_row(t, back=False)]
