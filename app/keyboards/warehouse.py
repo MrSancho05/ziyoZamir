@@ -125,7 +125,8 @@ def remove_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
 def pm_menu_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
     return grid([_b(t["wh_pm_add"], "pm", k="add"), _b(t["wh_pm_rename"], "pm", k="ren"),
                  _b(t["wh_pm_delete"], "pm", k="del"), _b(t["wh_pm_cats"], "cm"),
-                 _b(t["wh_pm_unpriced"], "unp"), _b(t["wh_pm_sync"], "pm", k="sync")],
+                 _b(t["wh_pm_unpriced"], "unp"), _b(t["wh_pm_masters"], "dm", k="master"),
+                 _b(t["wh_pm_units"], "dm", k="unit")],
                 [cancel_row(t, back=False)])
 
 
@@ -147,6 +148,19 @@ def cat_menu_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
 def cat_pick_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
     return grid([_b(_cat_label(c), "cpk", i) for i, c in enumerate(labels)],
                 [[_b(t["wh_btn_back"], "cm")], cancel_row(t, back=False)])
+
+
+# ---------- 👷 Ustalar / 📏 O'lchov birliklari (Справочник) ----------
+def dir_menu_kb(t: Dict[str, str], kind: str, has_items: bool) -> InlineKeyboardMarkup:
+    buttons = [_b(t["wh_dir_add"], "dma", k=kind)]
+    if has_items:
+        buttons.append(_b(t["wh_dir_del"], "dmd", k=kind))
+    return grid(buttons, [[_b(t["wh_btn_back"], "pmm")], cancel_row(t, back=False)])
+
+
+def dir_pick_kb(t: Dict[str, str], kind: str, values: Sequence[str]) -> InlineKeyboardMarkup:
+    return grid([_b(f"🗑 {_short(v, 24)}", "dmx", i, k=kind) for i, v in enumerate(values)],
+                [[_b(t["wh_btn_back"], "dm", k=kind)], cancel_row(t, back=False)])
 
 
 # ---------- 💰 Narxi yo'q tovarlar ----------

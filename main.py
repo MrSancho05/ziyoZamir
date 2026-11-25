@@ -65,10 +65,12 @@ async def main() -> None:
     except Exception:
         logging.exception("Jadval ustunlarini tekshirib bo'lmadi (bot ishlashda davom etadi)")
     try:
-        # Справочник dagi, lekin Остатки и Расходы da yo'q mahsulotlar avtomatik kategoriya bilan qo'shiladi
-        await warehouse.sync_from_directory()
+        # BIR MARTALIK (data/.spravochnik_cleaned_v1): Справочник tozalanadi va standart birliklar yoziladi,
+        # avtomatik import qilingan harakatsiz tovarlar Остатки dan olinadi. Avval data/ ga zaxira nusxa.
+        # Mahsulotlar endi faqat Остатки и Расходы dan o'qiladi; Справочник dan avto-import YO'Q.
+        await warehouse.reset_directory_once(settings.db_path.parent)
     except Exception:
-        logging.exception("Справочник sinxronini bajarib bo'lmadi (bot ishlashda davom etadi)")
+        logging.exception("Справочник ni tozalab bo'lmadi (keyingi ishga tushishda qayta urinadi)")
 
     bot = Bot(
         token=settings.bot_token,

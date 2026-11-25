@@ -18,19 +18,20 @@ Ustunlar hech qachon o'rtaga qo'shilmaydi: yetishmagan ustun jadval OXIRIGA qo's
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from gspread.exceptions import WorksheetNotFound
 from gspread.utils import ValueInputOption, ValueRenderOption, rowcol_to_a1
 
 from app.services.categories import merge as merge_categories
-from app.services.categories import suggest as suggest_category
 from app.services.flows_grid import parse_cell_date
 from app.services.sheets import SheetsClient
 
@@ -40,7 +41,15 @@ CACHE_TTL = 60.0          # soniya
 SERIAL_EPOCH = date(1899, 12, 30)       # Google Sheets sana seriya raqamining boshlanishi
 YELLOW = {"red": 1.0, "green": 0.95, "blue": 0.6}      # "Narxi keyin kiritiladi" qatorlari
 UNITS = ("шт", "кг", "м", "рулон", "упак")
-FALLBACK_CATEGORY = "Расходники"     # Справочник sinxronida hech bir kalit so'zga mos kelmagan tovarlar
+# Справочник ustunlari (4 ta) va standart o'lchov birliklari
+UNIT_KIND, MASTER, PRODUCT, RESPONSIBLE = "unit", "master", "product", "responsible"
+DIR_HEADERS = ("Ед. изм.", "Мастера", "Наименование товара", "Ответственные")
+DIR_NEEDLES = {UNIT_KIND: ("Ед. изм.", "ед. изм", "ед.изм"), MASTER: ("Мастера", "мастер"),
+               PRODUCT: ("Наименование товара", "наименование"), RESPONSIBLE: ("Ответственные", "ответствен")}
+DEFAULT_UNITS = ("шт", "кг", "м", "литр", "компл", "пачка", "рулон", "лист", "кв. м", "баллон", "банка", "мешок",
+                 "ведро", "пара", "каробка")
+RESET_FLAG = ".spravochnik_cleaned_v1"
+RESET_MARKER = "zz_spravochnik_cleaned_v1"      # jadval darajasidagi ko'rinmas belgi (developerMetadata)
 
 SUPPLIER = "supplier"
 RECIPIENT = "recipient"
@@ -360,25 +369,29 @@ class WarehouseService:
     async def last_price(self, name: str) -> Optional[float]:
         return (await self._flow_cache()).last_price.get(_key(name))
 
-    # ---------- Справочник ----------
+    # ---------- Справочник: 4 ustunli asosiy ma'lumotnoma ----------
+    # Ед. изм. | Мастера | Наименование товара | Ответственные — hammasi botdan boshqariladi (Table4 ichida).
     @staticmethod
-    def _dir_col(header: Sequence[Any], kind: str) -> Optional[int]:
-        if kind == SUPPLIER:
-            return _find_col(header, "Поставщики", "поставщик", "магазин")
-        return _find_col(header, "Ответственные", "ответствен", "получател")
+    def _dir_header_index(values: List[List[Any]]) -> int:
+        return _header_index(values, "Наименование товара", "Мастера", "Ед. изм.", "Ответственные")
+
+    @staticmethod
+    def _dir_kind_col(header: Sequence[Any], kind: str) -> Optional[int]:
+        needles = DIR_NEEDLES.get(kind)
+        return _find_col(header, *needles) if needles else None
 
     def _read_directory(self) -> Dict[str, List[str]]:
-        out: Dict[str, List[str]] = {SUPPLIER: [], RECIPIENT: []}
+        out: Dict[str, List[str]] = {k: [] for k in (*DIR_NEEDLES, SUPPLIER, RECIPIENT)}
         try:
             values = self._ws(self.directory_tab).get_all_values()
         except WorksheetNotFound:
             logger.warning("'%s' varag'i topilmadi", self.directory_tab)
             return out
-        h = _header_index(values, "Поставщики", "Ответственные", "поставщик", "ответствен")
         if not values:
             return out
-        for kind in (SUPPLIER, RECIPIENT):
-            col = self._dir_col(values[h], kind)
+        h = self._dir_header_index(values)
+        for kind in DIR_NEEDLES:
+            col = self._dir_kind_col(values[h], kind)
             if col is None:
                 continue
             seen = set()
@@ -387,6 +400,8 @@ class WarehouseService:
                 if v and _key(v) not in seen:
                     seen.add(_key(v))
                     out[kind].append(v)
+        # 📤 Chiqim oluvchilari: Мастера (+ Ответственные). Do'konlar Справочник da saqlanmaydi — Приход tarixidan
+        out[RECIPIENT] = merge_categories(out[MASTER], out[RESPONSIBLE])
         return out
 
     async def directory(self, kind: str) -> List[str]:
@@ -395,53 +410,186 @@ class WarehouseService:
             self._directory_ts = time.monotonic()
         return self._directory.get(kind, [])
 
+    async def units(self) -> List[str]:
+        """➕ Yangi mahsulot uchun o'lchov birliklari: Справочник «Ед. изм.» ustuni (bo'sh bo'lsa — standart)."""
+        return await self.directory(UNIT_KIND) or list(DEFAULT_UNITS)
+
     async def top_names(self, kind: str, limit: int = 6) -> List[str]:
-        """Справочник dagi nomlar, Приход/Расход da eng ko'p ishlatilgani birinchi."""
+        """Справочник dagi nomlar (Мастера), Приход/Расход da eng ko'p ishlatilgani birinchi.
+        Do'konlar (SUPPLIER) — Приход tarixidan."""
         names = await self.directory(kind)
         counts = (await self._flow_cache()).counts.get(kind, Counter())
         by_key = {_key(k): v for k, v in counts.items()}
-        if not names:                                  # Справочник bo'sh: tarixdan olinadi
+        if not names:
             names = [n for n, _ in counts.most_common(limit)]
         order = {n: i for i, n in enumerate(names)}
         ranked = sorted(names, key=lambda n: (-by_key.get(_key(n), 0), order[n]))
         return ranked[:limit]
 
-    def _add_directory_sync(self, kind: str, name: str) -> bool:
+    def _dir_append_sync(self, kind: str, value: str) -> bool:
+        """Qiymat Справочник ning tegishli ustuni oxiriga (Table4 ichida) yoziladi. False — allaqachon bor yoki
+        ustun yo'q (ustunlar o'zboshimchalik bilan qo'shilmaydi: varaq 4 ustunli)."""
         try:
             ws = self._ws(self.directory_tab)
         except WorksheetNotFound:
-            ws = self._sheets.spreadsheet.add_worksheet(self.directory_tab, rows=200, cols=6)
+            return False
         values = ws.get_all_values()
-        h = _header_index(values, "Поставщики", "Ответственные", "поставщик", "ответствен")
-        header = values[h] if values else []
-        col = self._dir_col(header, kind)
-        if col is None:                                # ustun yo'q: sarlavha qatoriga qo'shiladi
-            col = len(header)
-            if ws.col_count < col + 1:
-                ws.add_cols(col + 1 - ws.col_count)
-            ws.update_cell(h + 1, col + 1, "Поставщики" if kind == SUPPLIER else "Ответственные")
+        h = self._dir_header_index(values)
+        col = self._dir_kind_col(values[h], kind) if values else None
+        if col is None:
+            return False
         last = h
         for i, row in enumerate(values[h + 1:], start=h + 1):
             v = str(_cell(row, col)).strip()
             if v:
-                if _key(v) == _key(name):
-                    return False                       # allaqachon bor
+                if _key(v) == _key(value):
+                    return False
                 last = i
-        target = last + 2                              # 1 dan boshlangan qator raqami
+        target = last + 2
         if ws.row_count < target:
             ws.add_rows(target - ws.row_count + 50)
-        ws.update([[name]], rowcol_to_a1(target, col + 1), value_input_option=ValueInputOption.raw)
+        ws.update([[value]], rowcol_to_a1(target, col + 1), value_input_option=ValueInputOption.raw)
+        self._expand_table(ws, h, target)
         return True
 
+    def _dir_remove_sync(self, kind: str, value: str) -> int:
+        """Faqat shu ustundagi katak o'chiriladi va ustun yuqoriga suriladi (boshqa ustunlar joyida qoladi)."""
+        try:
+            ws = self._ws(self.directory_tab)
+        except WorksheetNotFound:
+            return 0
+        values = ws.get_all_values()
+        if not values:
+            return 0
+        h = self._dir_header_index(values)
+        col = self._dir_kind_col(values[h], kind)
+        if col is None:
+            return 0
+        rows = [i for i, row in enumerate(values) if i > h and _key(_cell(row, col)) == _key(value)]
+        requests = [{"deleteRange": {"range": {"sheetId": ws.id, "startRowIndex": r, "endRowIndex": r + 1,
+                                               "startColumnIndex": col, "endColumnIndex": col + 1},
+                                     "shiftDimension": "ROWS"}} for r in sorted(rows, reverse=True)]
+        if requests:
+            self._sheets.spreadsheet.batch_update({"requests": requests})
+        return len(requests)
+
+    async def add_directory_value(self, kind: str, value: str) -> bool:
+        ok = await self._sheets.run(self._dir_append_sync, kind, value)
+        self._directory_ts = 0.0
+        return ok
+
+    async def delete_directory_value(self, kind: str, value: str) -> int:
+        n = await self._sheets.run(self._dir_remove_sync, kind, value)
+        self._directory_ts = 0.0
+        return n
+
     async def remember_name(self, kind: str, name: str) -> None:
-        """Yangi do'kon / oluvchi Справочник ga qo'shiladi (keyingi safar tugma bo'lib chiqadi)."""
-        if not name or any(_key(n) == _key(name) for n in await self.directory(kind)):
+        """📤 Chiqim da yozilgan yangi oluvchi «Мастера» ga qo'shiladi (keyingi safar tugma bo'lib chiqadi).
+        Do'konlar Справочник ga yozilmaydi (varaq 4 ustunli); ular Приход tarixidan taklif qilinadi."""
+        if kind != RECIPIENT or not name or any(_key(n) == _key(name) for n in await self.directory(kind)):
             return
         try:
-            await self._sheets.run(self._add_directory_sync, kind, name)
+            await self.add_directory_value(MASTER, name)
         except Exception:
             logger.exception("Справочник ga yozib bo'lmadi")
-        self._directory_ts = 0.0
+
+    # ---------- bir martalik: Справочник ni tozalash va avto-import qilingan tovarlarni olib tashlash ----------
+    def _reset_marker_exists(self) -> bool:
+        meta = self._sheets.spreadsheet.fetch_sheet_metadata(
+            params={"fields": "developerMetadata(metadataKey)"})
+        return any(m.get("metadataKey") == RESET_MARKER for m in meta.get("developerMetadata", []) or [])
+
+    def _reset_marker_write(self, stamp: str) -> None:
+        self._sheets.spreadsheet.batch_update({"requests": [{"createDeveloperMetadata": {"developerMetadata": {
+            "metadataKey": RESET_MARKER, "metadataValue": stamp, "location": {"spreadsheet": True},
+            "visibility": "DOCUMENT"}}}]})
+
+    def _reset_plan_sync(self) -> Dict[str, Any]:
+        """Hech narsa yozmaydi: zaxira nusxa uchun hozirgi holat va o'chiriladigan qatorlar."""
+        try:
+            dvalues = self._ws(self.directory_tab).get_all_values()
+        except WorksheetNotFound:
+            dvalues = []
+        history = set()
+        for title in (self.inflow_tab, self.outflow_tab):
+            try:
+                values = self._ws(title).get_all_values()
+            except WorksheetNotFound:
+                continue
+            if not values:
+                continue
+            hh = _header_index(values, "Наименование товара", "наименование")
+            col = _find_col(values[hh], "Наименование товара", "наименование")
+            history |= {_key(_cell(r, col)) for r in values[hh + 1:] if str(_cell(r, col)).strip()}
+        inv = self._ws(self.inventory_tab).get_all_values()
+        h = _header_index(inv, "Наименование товара", "наименование") if inv else 0
+        name_col = self._inv_cols(inv[h] if inv else [])["name"]
+        data_rows = [i for i, r in enumerate(inv) if i > h and str(_cell(r, name_col)).strip()]
+        drop = [i for i in data_rows if _key(_cell(inv[i], name_col)) not in history]
+        if drop and len(drop) == len(data_rows):
+            drop = drop[1:]                     # formulalar namunasi (2-qator) yo'qolmasin
+        return {"directory": dvalues, "inventory_header": inv[h] if inv else [],
+                "inventory_dropped": [inv[i] for i in drop], "drop_rows": drop,
+                "kept": [str(_cell(inv[i], name_col)) for i in data_rows if i not in drop]}
+
+    def _reset_apply_sync(self, plan: Dict[str, Any], units: Sequence[str]) -> None:
+        try:
+            ws = self._ws(self.directory_tab)
+        except WorksheetNotFound:
+            ws = self._sheets.spreadsheet.add_worksheet(self.directory_tab, rows=200, cols=6)
+        ws.batch_clear([f"A1:Z{max(ws.row_count, 2)}"])
+        ws.update([list(DIR_HEADERS)], "A1:D1", value_input_option=ValueInputOption.raw)
+        ws.update([[u] for u in units], f"A2:A{1 + len(units)}", value_input_option=ValueInputOption.raw)
+        requests = []
+        for tb in self._tables(ws.id):
+            rng = tb.get("range") or {}
+            if rng.get("startRowIndex", 0) == 0:
+                requests.append({"updateTable": {"table": {"tableId": tb["tableId"], "range": {
+                    "sheetId": ws.id, "startRowIndex": 0, "endRowIndex": 1 + len(units),
+                    "startColumnIndex": 0, "endColumnIndex": len(DIR_HEADERS)}}, "fields": "range"}})
+        if requests:
+            try:
+                self._sheets.spreadsheet.batch_update({"requests": requests})
+            except Exception:
+                logger.warning("Table4 chegarasini yangilab bo'lmadi", exc_info=True)
+        if plan["drop_rows"]:
+            inv = self._ws(self.inventory_tab)
+            self._sheets.spreadsheet.batch_update({"requests": [
+                {"deleteDimension": {"range": {"sheetId": inv.id, "dimension": "ROWS",
+                                               "startIndex": i, "endIndex": i + 1}}}
+                for i in sorted(plan["drop_rows"], reverse=True)]})
+
+    async def reset_directory_once(self, data_dir: Path) -> Optional[Dict[str, Any]]:
+        """Bir martalik tozalash (`data/.spravochnik_cleaned_v1` belgisi bilan):
+        1) avval `data/spravochnik_backup_*.json` ga to'liq zaxira nusxa;
+        2) Справочник: 4 ustunli sarlavha, faqat standart o'lchov birliklari, Table4 = A1:D16;
+        3) Остатки и Расходы: Приход/Расход da hech qanday harakati yo'q (avtomatik import qilingan) qatorlar
+           o'chiriladi — haqiqiy harakati borlari qoladi.
+        Belgi muvaffaqiyatdan keyingina yoziladi: xato bo'lsa, keyingi ishga tushishda qayta urinadi."""
+        flag = data_dir / RESET_FLAG
+        if flag.exists():
+            return None
+        # jadvalning o'zidagi ko'rinmas belgi: bot boshqa kompyuterda ishga tushsa ham tozalash QAYTARILMAYDI
+        if await self._sheets.run(self._reset_marker_exists):
+            data_dir.mkdir(parents=True, exist_ok=True)
+            flag.write_text("marker found in spreadsheet", encoding="utf-8")
+            return None
+        plan = await self._sheets.run(self._reset_plan_sync)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(self._tz).strftime("%Y%m%d_%H%M%S")
+        backup = data_dir / f"spravochnik_backup_{stamp}.json"
+        backup.write_text(json.dumps({k: v for k, v in plan.items() if k != "drop_rows"}, ensure_ascii=False,
+                                     indent=1), encoding="utf-8")
+        await self._sheets.run(self._reset_apply_sync, plan, DEFAULT_UNITS)
+        try:
+            await self._sheets.run(self._reset_marker_write, stamp)
+        except Exception:
+            logger.warning("Jadvalga tozalash belgisini yozib bo'lmadi (mahalliy belgi yoziladi)", exc_info=True)
+        flag.write_text(datetime.now(self._tz).isoformat(), encoding="utf-8")
+        self.invalidate()
+        logger.warning("Справочник tozalandi; Остатки dan %d ta harakatsiz tovar olib tashlandi (zaxira: %s)",
+                       len(plan["drop_rows"]), backup.name)
+        return {"dropped": len(plan["drop_rows"]), "kept": plan["kept"], "backup": backup.name}
 
     # ---------- qator qo'shish (formulalar bilan) ----------
     # ---------- Google Sheets jadvallari (Table1 / Table2 / Table3) ----------
@@ -903,117 +1051,10 @@ class WarehouseService:
                 raise DuplicateError(name)
         row = self._add_products_rows(header, [(name, category, unit, pack, min_stock)])[0]
         try:
-            self._dir_add_product(name)           # Справочник dagi ro'yxatga ham (Приход/Расход ochiladigan ro'yxati)
+            self._dir_append_sync(PRODUCT, name)   # Справочник «Наименование товара» ga ham (Table4 ichida)
         except Exception:
             logger.warning("Yangi mahsulotni Справочник ga yozib bo'lmadi", exc_info=True)
         return row
-
-    # ---------- Справочник <-> Остатки и Расходы ----------
-    def _dir_sheet(self):
-        try:
-            ws = self._ws(self.directory_tab)
-        except WorksheetNotFound:
-            return None, [], 0, None
-        values = ws.get_all_values()
-        h = _header_index(values, "Наименование товара", "наименование")
-        col = _find_col(values[h], "Наименование товара", "наименование") if values else None
-        return ws, values, h, col
-
-    def _dir_add_product(self, name: str) -> bool:
-        ws, values, h, col = self._dir_sheet()
-        if ws is None or col is None:
-            return False
-        last = h
-        for i, row in enumerate(values[h + 1:], start=h + 1):
-            v = str(_cell(row, col)).strip()
-            if v:
-                if _key(v) == _key(name):
-                    return False
-                last = i
-        target = last + 2
-        if ws.row_count < target:
-            ws.add_rows(target - ws.row_count + 50)
-        ws.update([[name]], rowcol_to_a1(target, col + 1), value_input_option=ValueInputOption.raw)
-        self._expand_table(ws, h, target)
-        return True
-
-    def _dir_delete_product(self, name: str) -> int:
-        """Справочник: faqat mahsulot katagi o'chiriladi va shu ustun yuqoriga suriladi (boshqa ustunlar —
-        birliklar, ustalar, mas'ullar — joyida qoladi)."""
-        ws, values, h, col = self._dir_sheet()
-        if ws is None or col is None:
-            return 0
-        rows = [i for i, row in enumerate(values) if i > h and _key(_cell(row, col)) == _key(name)]
-        requests = [{"deleteRange": {"range": {"sheetId": ws.id, "startRowIndex": r, "endRowIndex": r + 1,
-                                               "startColumnIndex": col, "endColumnIndex": col + 1},
-                                     "shiftDimension": "ROWS"}} for r in sorted(rows, reverse=True)]
-        if requests:
-            self._sheets.spreadsheet.batch_update({"requests": requests})
-        return len(requests)
-
-    def _sync_directory_sync(self) -> Dict[str, Any]:
-        """Справочник dagi har bir mahsulot Остатки и Расходы da bo'lishi kerak. Yo'qlari avtomatik kategoriya
-        bilan qo'shiladi. Takror chaqirish xavfsiz: bor mahsulot (katta-kichik harf, bo'shliqlardan qat'i nazar)
-        qayta qo'shilmaydi."""
-        ws, dvalues, dh, dcol = self._dir_sheet()
-        if ws is None or dcol is None:
-            return {"added": [], "categorized": [], "directory": 0, "fallback": 0}
-        names: List[str] = []
-        seen = set()
-        for row in dvalues[dh + 1:]:
-            n = re.sub(r"\s+", " ", str(_cell(row, dcol))).strip()
-            if n and _key(n) not in seen:
-                seen.add(_key(n))
-                names.append(clean_text(n, 120))
-        inv = self._ws(self.inventory_tab)
-        values = inv.get_all_values()
-        h = _header_index(values, "Наименование товара", "наименование")
-        header = values[h] if values else []
-        cols = self._inv_cols(header)
-        existing = [(str(_cell(r, cols["name"])).strip(), str(_cell(r, cols["category"])).strip())
-                    for r in values[h + 1:] if str(_cell(r, cols["name"])).strip()]
-        have = {_key(n) for n, _ in existing}
-        new = [n for n in names if n and _key(n) not in have]
-        fallback = 0
-        known = [(n, c) for n, c in existing if c]
-
-        # katalogda bor, lekin "Категория" katagi BO'SH mahsulotlar ham toifalanadi (to'ldirilgani o'zgartirilmaydi)
-        filled: List[Tuple[str, str]] = []
-        if cols["category"] is not None:
-            data = []
-            for i, r in enumerate(values):
-                name = str(_cell(r, cols["name"])).strip() if i > h else ""
-                if not name or str(_cell(r, cols["category"])).strip():
-                    continue
-                cat = suggest_category(name, known)
-                if not cat:
-                    cat, fallback = FALLBACK_CATEGORY, fallback + 1
-                known.append((name, cat))
-                filled.append((name, cat))
-                data.append({"range": rowcol_to_a1(i + 1, cols["category"] + 1), "values": [[cat]]})
-            if data:
-                inv.batch_update(data, value_input_option=ValueInputOption.raw)
-        if not new:
-            return {"added": [], "categorized": filled, "directory": len(names), "fallback": fallback}
-        rows = []
-        for n in new:
-            cat = suggest_category(n, known)
-            if not cat:
-                cat, fallback = FALLBACK_CATEGORY, fallback + 1
-            known.append((n, cat))                     # keyingi tovarlar uchun ham o'xshashlik manbai
-            rows.append((n, cat, "шт", 1.0, 0.0))
-        self._add_products_rows(header, rows)
-        return {"added": [(n, c) for n, c, *_ in rows], "categorized": filled, "directory": len(names),
-                "fallback": fallback}
-
-    async def sync_from_directory(self) -> Dict[str, Any]:
-        """{"added": [(nom, kategoriya)], "directory": Справочник dagi mahsulotlar soni, "fallback": N}."""
-        res = await self._sheets.run(self._sync_directory_sync)
-        if res["added"] or res["categorized"]:
-            logger.info("Справочник -> %s: %d ta mahsulot qo'shildi, %d tasiga kategoriya berildi",
-                        self.inventory_tab, len(res["added"]), len(res["categorized"]))
-        self.invalidate()
-        return res
 
     async def add_product(self, name: str, category: str, unit: str, pack: float, min_stock: float) -> int:
         row = await self._sheets.run(self._add_product_sync, name, category, unit, pack, min_stock)
@@ -1074,7 +1115,7 @@ class WarehouseService:
         self._sheets.spreadsheet.batch_update({"requests": [{"deleteDimension": {"range": {
             "sheetId": ws.id, "dimension": "ROWS", "startIndex": row - 1, "endIndex": row}}}]})
         try:
-            self._dir_delete_product(name)          # aks holda keyingi sinxronda qayta qo'shilib qolardi
+            self._dir_remove_sync(PRODUCT, name)    # Справочник dan ham
         except Exception:
             logger.warning("Mahsulotni Справочник dan o'chirib bo'lmadi", exc_info=True)
         return row

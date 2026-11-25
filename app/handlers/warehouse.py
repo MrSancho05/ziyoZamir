@@ -36,7 +36,9 @@ from app.services.categories import label as cat_label
 from app.services.categories import suggest as suggest_category
 from app.services.search import exact_match, normalize, search_products
 from app.services.warehouse import (
+    MASTER,
     RECIPIENT,
+    UNIT_KIND,
     SUPPLIER,
     UNITS,
     DuplicateError,
@@ -81,6 +83,7 @@ class WhSt(StatesGroup):
     unp_price = State()      # 💰 narxi yo'q tovar: narx kutilmoqda
     cat_name = State()       # 🏷 yangi kategoriya nomi
     cat_rn = State()         # 🏷 kategoriyaning yangi nomi
+    dir_add = State()        # 👷 usta / 📏 o'lchov birligi: yangi qiymat kutilmoqda
 
 
 # ---------------- yordamchilar ----------------
@@ -235,10 +238,6 @@ async def noop(callback: CallbackQuery) -> None:
 async def pm_action(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
                     warehouse: WarehouseService) -> None:
     await state.clear()
-    if callback_data.k == "sync":
-        await callback.answer("⏳")
-        await _run_directory_sync(callback.message, t, warehouse)
-        return
     if callback_data.k == "add":
         await state.update_data(np={"ret": None}, cart=[])
         await state.set_state(WhSt.np_name)
@@ -389,7 +388,7 @@ async def _show_mode(target: Message, t: Dict[str, str], state: FSMContext, edit
                 kb.mode_kb(t, _n(cur["pack"]), cur["unit"]), edit)
 
 
-BOX_UNITS = ("упак", "уп", "кор", "коробка", "karobka", "quti", "pack", "box")
+BOX_UNITS = ("упак", "уп", "кор", "коробка", "каробка", "пачка", "karobka", "quti", "pack", "box")
 
 
 def _qty_tip(t: Dict[str, str], cur: Dict[str, Any]) -> str:
@@ -792,7 +791,12 @@ async def _np_set_name(target: Message, t: Dict[str, str], state: FSMContext, wa
         await _show(target, t["wh_np_dup"].format(name=escape(dup)), kb.cancel_kb(t), edit)
         return
     await _np_update(state, name=name)
-    await state.update_data(np_cats=cats)
+    try:
+        units = await warehouse.units()                 # Справочник «Ед. изм.» (📏 O'lchov birliklari)
+    except Exception:
+        logger.exception("O'lchov birliklarini o'qib bo'lmadi")
+        units = list(UNITS)
+    await state.update_data(np_cats=cats, np_units=units)
     await state.set_state(WhSt.np_cat)
     # 🤖 aqlli tavsiya: avval katalogdagi o'xshash mahsulotlar, keyin kalit so'zlar lug'ati
     hint = (await state.get_data()).get("np_cat_hint")
@@ -829,8 +833,9 @@ async def np_suggest_answer(callback: CallbackQuery, callback_data: WhCb, t: Dic
 
 
 async def _np_ask_unit(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
+    units = (await state.get_data()).get("np_units") or list(UNITS)
     await state.set_state(WhSt.np_unit)
-    await _show(target, t["wh_np_unit"], kb.np_unit_kb(t, UNITS), edit)
+    await _show(target, t["wh_np_unit"], kb.np_unit_kb(t, units), edit)
 
 
 @router.callback_query(WhSt.np_cat, WhCb.filter(F.a == "ncat"))
@@ -870,7 +875,8 @@ async def _np_ask_pack(target: Message, t: Dict[str, str], state: FSMContext, un
 @router.callback_query(WhSt.np_unit, WhCb.filter(F.a == "unit"))
 async def np_unit_pick(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str],
                        state: FSMContext) -> None:
-    unit = UNITS[callback_data.i] if callback_data.i < len(UNITS) else UNITS[0]
+    units = (await state.get_data()).get("np_units") or list(UNITS)
+    unit = units[callback_data.i] if callback_data.i < len(units) else units[0]
     await _np_ask_pack(callback.message, t, state, unit, edit=True)
     await callback.answer()
 
@@ -1005,6 +1011,11 @@ async def confirm_action(callback: CallbackQuery, t: Dict[str, str], state: FSMC
         elif act.get("kind") == "del":
             await warehouse.delete_product(act["name"])
             text = t["wh_del_done2"].format(name=escape(act["name"]))
+        elif act.get("kind") == "ddel":
+            await warehouse.delete_directory_value(act["dk"], act["name"])
+            await callback.message.answer(t["wh_dir_deleted"].format(name=escape(act["name"])))
+            await _show_dir_menu(callback.message, t, state, warehouse, act["dk"], edit=True)
+            return
         elif act.get("kind") == "cdel":
             count = (await warehouse.category_counts()).get(act["name"].casefold(), 0)
             if count:
@@ -1267,29 +1278,95 @@ async def cat_rename_text(message: Message, t: Dict[str, str], state: FSMContext
     await _show_cat_menu(message, t, state, warehouse, edit=False)
 
 
-# ---------------- 🔄 Справочник -> Остатки и Расходы sinxroni ----------------
-async def _run_directory_sync(target: Message, t: Dict[str, str], warehouse: WarehouseService) -> None:
+# ---------------- 👷 Ustalar / 📏 O'lchov birliklari (Справочник ustunlari) ----------------
+_DIR_KINDS = (MASTER, UNIT_KIND)
+
+
+async def _show_dir_menu(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                         kind: str, edit: bool) -> None:
+    kind = kind if kind in _DIR_KINDS else MASTER
     try:
-        res = await warehouse.sync_from_directory()
+        values = await warehouse.directory(kind)
     except Exception:
-        logger.exception("Справочник sinxronida xatolik")
-        await target.answer(t["wh_save_error"])
+        logger.exception("Справочник ni o'qib bo'lmadi")
+        await target.answer(t["error"])
         return
-    added, categorized = res["added"], res.get("categorized", [])
-    if not added and not categorized:
-        await _show(target, t["wh_sync_none"].format(n=res["directory"]), kb.pm_menu_kb(t), True)
+    await state.clear()
+    await state.update_data(dm_kind=kind, dm_vals=values)
+    title = t["wh_dir_title_master" if kind == MASTER else "wh_dir_title_unit"].format(n=len(values))
+    body = "\n".join(f"{i}. {escape(v)}" for i, v in enumerate(values, start=1)) or t["wh_dir_empty"]
+    await _show(target, f"{title}\n\n{body}", kb.dir_menu_kb(t, kind, bool(values)), edit)
+
+
+@router.callback_query(WhCb.filter(F.a == "pmm"))
+async def back_to_pm_menu(callback: CallbackQuery, t: Dict[str, str], state: FSMContext) -> None:
+    await state.clear()
+    await callback.answer()
+    await _show(callback.message, t["wh_pm_title"], kb.pm_menu_kb(t), True)
+
+
+@router.callback_query(WhCb.filter(F.a == "dm"))
+async def open_dir_menu(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                        warehouse: WarehouseService) -> None:
+    await callback.answer()
+    await _show_dir_menu(callback.message, t, state, warehouse, callback_data.k, edit=True)
+
+
+@router.callback_query(WhCb.filter(F.a == "dma"))
+async def dir_add_prompt(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str],
+                         state: FSMContext) -> None:
+    kind = callback_data.k if callback_data.k in _DIR_KINDS else MASTER
+    await state.update_data(dm_kind=kind)
+    await state.set_state(WhSt.dir_add)
+    await callback.answer()
+    await _show(callback.message, t["wh_dir_add_master" if kind == MASTER else "wh_dir_add_unit"],
+                kb.cancel_kb(t), True)
+
+
+@router.message(WhSt.dir_add, F.text)
+async def dir_add_text(message: Message, t: Dict[str, str], state: FSMContext,
+                       warehouse: WarehouseService) -> None:
+    value = clean_text(message.text, 40 if (await state.get_data()).get("dm_kind") == UNIT_KIND else 60)
+    if not value:
         return
-    lang = _lang(t)
-    lines = [f"• {escape(n)} — {escape(cat_label(c, lang))}" for n, c in added[:25]]
-    if len(added) > 25:
-        lines.append(f"… +{len(added) - 25}")
-    text = (t["wh_sync_done"].format(n=len(added), total=res["directory"], list="\n".join(lines)) if added
-            else t["wh_sync_none"].format(n=res["directory"]))
-    if categorized:
-        text += "\n\n" + t["wh_sync_categorized"].format(n=len(categorized))
-    if res["fallback"]:
-        text += "\n\n" + t["wh_sync_fallback"].format(n=res["fallback"], cat=escape(cat_label("Расходники", lang)))
-    await _show(target, text, kb.pm_menu_kb(t), True)
+    kind = (await state.get_data()).get("dm_kind", MASTER)
+    try:
+        added = await warehouse.add_directory_value(kind, value)
+    except Exception:
+        logger.exception("Справочник ga yozib bo'lmadi")
+        await message.answer(t["wh_save_error"])
+        return
+    if not added:
+        await message.answer(t["wh_dir_dup"].format(name=escape(value)), reply_markup=kb.cancel_kb(t))
+        return
+    await message.answer(t["wh_dir_added"].format(name=escape(value)))
+    await _show_dir_menu(message, t, state, warehouse, kind, edit=False)
+
+
+@router.callback_query(WhCb.filter(F.a == "dmd"))
+async def dir_delete_pick(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                          warehouse: WarehouseService) -> None:
+    kind = callback_data.k if callback_data.k in _DIR_KINDS else MASTER
+    values = await warehouse.directory(kind)
+    await state.update_data(dm_kind=kind, dm_vals=values)
+    await callback.answer()
+    await _show(callback.message, t["wh_dir_pick_del"], kb.dir_pick_kb(t, kind, values), True)
+
+
+@router.callback_query(WhCb.filter(F.a == "dmx"))
+async def dir_delete_confirm(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str],
+                             state: FSMContext) -> None:
+    data = await state.get_data()
+    values = data.get("dm_vals") or []
+    if callback_data.i >= len(values):
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    name = values[callback_data.i]
+    await state.update_data(act={"kind": "ddel", "dk": data.get("dm_kind", MASTER), "name": name})
+    await state.set_state(WhSt.confirm)
+    await callback.answer()
+    await _show(callback.message, t["wh_dir_del_confirm"].format(name=escape(name)),
+                kb.confirm_kb(t, t["wh_btn_yes_delete"]), True)
 
 
 # ---------------- ⬅️ Orqaga: har bir qadamda bitta qadam ortga ----------------
@@ -1361,8 +1438,12 @@ async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContex
             await _show(msg, t["wh_rn_prompt"].format(name=escape(data["act"]["old"])), kb.cancel_kb(t), True)
         elif kind == "cdel":
             await _show_cat_menu(msg, t, state, warehouse, edit=True)
+        elif kind == "ddel":
+            await _show_dir_menu(msg, t, state, warehouse, data["act"]["dk"], edit=True)
         else:
             await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.dir_add.state:
+        await _show_dir_menu(msg, t, state, warehouse, data.get("dm_kind", MASTER), edit=True)
     elif st in (WhSt.cat_name.state, WhSt.cat_rn.state):
         await _show_cat_menu(msg, t, state, warehouse, edit=True)
     elif st == WhSt.unp_price.state:
