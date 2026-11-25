@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 from app.core.permissions import Permission, Role, has_permission
-from app.keyboards.webapp import dashboard_url, webapp_enabled
 
 # (ruxsat, tugma matni kaliti) — menyuda shu tartibda, 2 ustunli to'r bo'lib chiqadi
 _MENU = (
@@ -25,11 +24,11 @@ _MENU = (
 
 
 def main_menu_kb(t: Dict[str, str], role: Optional[Role], real_role: Optional[Role] = None) -> ReplyKeyboardMarkup:
-    """`real_role` = ADMIN va `role` boshqa bo'lsa: admin 🎭 rolni sinayapti — "🔙 Adminga qaytish" chiqadi."""
+    """`real_role` = ADMIN va `role` boshqa bo'lsa: admin 🎭 rolni sinayapti — "🔙 Adminga qaytish" chiqadi.
+
+    📊 Jonli Dashboard bu yerda YO'Q: u faqat chap pastki Menu tugmasida (services/webapp_menu.py) va
+    Boss/Admin hisobotlari ostidagi inline tugmada (keyboards/webapp.py)."""
     kb = ReplyKeyboardBuilder()
-    if webapp_enabled() and role in (Role.BOSS, Role.ADMIN):
-        kb.add(KeyboardButton(text=t["btn_dashboard"],
-                              web_app=WebAppInfo(url=dashboard_url(t.get("lang_code", "uz")))))
     for permission, key in _MENU:
         if has_permission(role, permission):
             kb.add(KeyboardButton(text=t[key]))

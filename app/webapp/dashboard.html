@@ -29,7 +29,11 @@
   html, body { margin: 0; background: var(--bg); color: var(--text); }
   body {
     font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Inter, sans-serif;
-    min-height: 100vh; overflow-x: hidden; padding: 0 0 calc(28px + env(safe-area-inset-bottom));
+    min-height: 100vh; min-height: 100dvh; overflow-x: hidden;
+    /* Telegram to'liq ekranda o'z tugmalarini tepaga qo'yadi: --tg-*-safe-area-inset-* (SDK beradi) + qurilma notch */
+    padding-top: max(env(safe-area-inset-top), calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)));
+    padding-bottom: calc(28px + max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)));
+    padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
   }
   /* --- jonli fon --- */
   .aurora { position: fixed; inset: -20vh -20vw; z-index: 0; pointer-events: none; filter: blur(70px); opacity: .55; }
@@ -53,12 +57,6 @@
     background: linear-gradient(135deg, var(--accent), var(--accent2)); box-shadow: 0 6px 22px rgba(79,107,255,.45); }
   h1 { font-size: 19px; margin: 0; letter-spacing: -.2px; }
   .sub { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
-  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 2s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 8px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
-  .icon-btn { width: 40px; height: 40px; border-radius: 14px; border: 1px solid var(--stroke); background: var(--glass);
-    color: var(--text); font-size: 18px; display: grid; place-items: center; cursor: pointer; }
-  .icon-btn.spin span { animation: spin .8s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* --- davr tablari --- */
   .tabs { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); padding: 5px; gap: 2px; border-radius: 18px; }
@@ -165,10 +163,9 @@
       <div class="logo">📊</div>
       <div>
         <h1 id="t-title">Jonli Dashboard</h1>
-        <div class="sub"><span class="live"></span><span id="t-sub">Ziyo Zamir MCHJ</span></div>
+        <div class="sub"><span id="t-sub">Ziyo Zamir MCHJ</span></div>
       </div>
     </div>
-    <button class="icon-btn" id="refresh" aria-label="refresh"><span>⟳</span></button>
   </header>
 
   <div class="tabs glass rise" id="tabs" style="animation-delay:.05s"><div class="pill" id="pill"></div></div>
@@ -263,7 +260,20 @@
     Object.values(charts).forEach(c => c && c.__render && c.__render());
   }
   const haptic = (kind = "light") => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(kind); } catch (e) {} };
-  if (tg) { tg.ready(); tg.expand(); tg.onEvent && tg.onEvent("themeChanged", applyTheme); }
+  // Darhol to'liq ekran: expand() hamma joyda, requestFullscreen() — Bot API 8.0+ mijozlarida (Android, iOS, Desktop)
+  function goFullscreen() {
+    if (!tg) return;
+    try { tg.ready(); } catch (e) {}
+    try { tg.expand(); } catch (e) {}
+    try { if (typeof tg.requestFullscreen === "function" && !tg.isFullscreen) tg.requestFullscreen(); } catch (e) {}
+    try { if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes(); } catch (e) {}   // aylantirganda yopilib ketmasin
+  }
+  goFullscreen();
+  document.addEventListener("DOMContentLoaded", goFullscreen);
+  if (tg && tg.onEvent) {
+    tg.onEvent("themeChanged", applyTheme);
+    tg.onEvent("fullscreenFailed", () => { try { tg.expand(); } catch (e) {} });   // qo'llamasa — oddiy kengaytirish
+  }
 
   // ---------- holat ----------
   const TF = ["d", "w", "m", "s", "y"];
@@ -329,7 +339,6 @@
   }
   $("prev").onclick = () => { if (state.offset <= -60) return; haptic(); state.offset -= 1; syncControls(); load(); };
   $("next").onclick = () => { if (state.offset >= 0) return; haptic(); state.offset += 1; syncControls(); load(); };
-  $("refresh").onclick = () => { haptic("medium"); load(true); };
   // badge ustida chapga / o'ngga surish — davrlar bo'ylab yurish
   let sx = null;
   document.querySelector(".nav").addEventListener("touchstart", e => { sx = e.touches[0].clientX; }, { passive: true });
@@ -492,13 +501,12 @@
     $("app").innerHTML = `<div class="gate glass rise"><div>${icon}</div><h2>${esc(title)}</h2><p style="color:var(--muted)">${esc(text)}</p></div>`;
   }
 
-  async function load(manual = false) {
+  async function load() {
     const initData = tg ? tg.initData : "";
     if (!initData) { gate("🔒", L.gateTitle, L.gateText); return; }
     const id = ++state.reqId;
     document.body.classList.add("loading");
     $("kpis").classList.add("skeleton");
-    if (manual) $("refresh").classList.add("spin");
     const q = new URLSearchParams({ tf: state.tf, season: state.season, offset: state.offset, lang: LANG });
     try {
       const res = await fetch("api/dashboard?" + q, { headers: { "X-Telegram-Init-Data": initData } });
@@ -512,7 +520,7 @@
     } catch (e) {
       if (id === state.reqId) toast(`⚠️ ${L.err}`);
     } finally {
-      if (id === state.reqId) { document.body.classList.remove("loading"); $("kpis").classList.remove("skeleton"); $("refresh").classList.remove("spin"); }
+      if (id === state.reqId) { document.body.classList.remove("loading"); $("kpis").classList.remove("skeleton"); }
     }
   }
 

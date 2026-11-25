@@ -918,7 +918,6 @@ for _lang, _texts in _WAREHOUSE_TEXTS.items():
 _V3_TEXTS = {
     "uz": {
         "lang_code": "uz",
-        "btn_dashboard": "📊 Jonli Dashboard",
         "btn_live_dashboard": "📊 Jonli Dashboard",
         "es_title": "📋 <b>KUNLIK IJROIYA XULOSASI</b>\n🗓 {date}, {weekday}",
         "es_cur": "so'm",
@@ -1079,7 +1078,6 @@ _V3_TEXTS = {
     },
     "ru": {
         "lang_code": "ru",
-        "btn_dashboard": "📊 Живой дашборд",
         "btn_live_dashboard": "📊 Живой дашборд",
         "es_title": "📋 <b>ЕЖЕДНЕВНАЯ СВОДКА РУКОВОДИТЕЛЯ</b>\n🗓 {date}, {weekday}",
         "es_cur": "сум",
