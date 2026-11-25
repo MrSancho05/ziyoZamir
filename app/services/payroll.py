@@ -33,9 +33,12 @@ def parse_money(value: Any) -> int | None:
     s = re.sub(r"[^\d.,]", "", str(value))
     if not re.search(r"\d", s):
         return None
-    if re.fullmatch(r"\d{1,3}([.,]\d{3})+", s):        # ming ajratgichlar
+    if "," in s and "." in s:                            # '46,572.58' / '46.572,58': oxirgisi — kasr belgisi
+        dec = "." if s.rfind(".") > s.rfind(",") else ","
+        s = s.replace("," if dec == "." else ".", "").replace(dec, ".")
+    elif re.fullmatch(r"\d{1,3}([.,]\d{3})+", s):      # ming ajratgichlar: '2,000,000', '1.500'
         s = re.sub(r"[.,]", "", s)
-    elif re.fullmatch(r"\d+[.,]\d{1,2}", s):             # kasr
+    elif re.fullmatch(r"\d+[.,]\d+", s):                # kasr: '1,5', '697409.6386' (formula natijasi)
         s = s.replace(",", ".")
     else:
         s = re.sub(r"[.,]", "", s)

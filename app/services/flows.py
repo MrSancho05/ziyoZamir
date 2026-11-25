@@ -12,6 +12,7 @@ from app.services.flows_grid import (
     has_detail_cols,
     is_complete_row,
     norm_rows,
+    parse_cell_date,
     row_info,
     rows_for_day,
     sheet_hash,
@@ -117,6 +118,33 @@ class FlowsService:
                                                [(r.label, r.qty, r.amount) for r in d.new_rows])
             await self._store.save_snapshot(key, day.isoformat(), d.digest, d.rows)
         return deltas
+
+    async def rebuild_history(self, before: date) -> dict[str, int]:
+        """Saqlangan kunlik yozuvlarni (flow_rows) varaqning o'zidan qayta quradi: `before` dan oldingi har bir
+        sana uchun shu sanadagi to'liq qatorlar. Eski (noto'g'ri o'qilgan) summalar va keyin qo'shilgan tarix
+        (masalan, import) shu bilan tuzatiladi. Sana ustuni bo'lmagan varaqqa tegilmaydi."""
+        counts: dict[str, int] = {}
+        for key in KEYS:
+            values = await self._sheets.run(self._read, key)
+            if values is None:
+                continue
+            table = analyze(norm_rows(values))
+            col = table.cols.get("date")
+            if col is None:
+                continue
+            by_day: dict[date, list[FlowRow]] = {}
+            current: date | None = None
+            for row in table.data:
+                raw = row[col] if col < len(row) else ""
+                if raw:
+                    current = parse_cell_date(raw, before.year)
+                if current is None or current >= before or not is_complete_row(table.header, table.cols, row):
+                    continue
+                by_day.setdefault(current, []).append(row_info(table.header, table.cols, row))
+            for day, rows in sorted(by_day.items()):
+                await self._store.replace_rows(key, day.isoformat(), [(r.label, r.qty, r.amount) for r in rows])
+            counts[key] = sum(len(v) for v in by_day.values())
+        return counts
 
     async def rows(self, key: str, start: date, end: date):
         """Kunlik yozuvlar (flows_store): Jonli Dashboard grafiklari uchun. Google Sheets o'qilmaydi."""

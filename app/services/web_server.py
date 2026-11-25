@@ -39,6 +39,14 @@ from app.utils.periods import SEASONS, TIMEFRAMES, TF_SEASONAL, TF_YEARLY, WINTE
 
 logger = logging.getLogger(__name__)
 
+
+def outflow_value(amount, qty, unit_price: float) -> float:
+    """Расход qatorining qiymati: «Сумма расхода (сум)» (= miqdor × narx) bevosita olinadi; u bo'sh bo'lsagina
+    miqdor × birlik narxi. Tayyor summa hech qachon miqdorga qayta ko'paytirilmaydi."""
+    if amount:
+        return float(amount)
+    return float(qty or 0) * float(unit_price or 0)
+
 HTML_PATH = Path(__file__).resolve().parent.parent / "webapp" / "dashboard.html"
 CACHE_TTL = 60.0
 INIT_DATA_MAX_AGE = 24 * 3600
@@ -153,10 +161,10 @@ class DashboardService:
             logger.exception("Dashboard: do'kon xarajatini o'qib bo'lmadi")
             d.errors.append("shop")
 
-        def value(r) -> float:            # Сумма расхода bo'lmasa: miqdor × o'rtacha narx
-            if r.amount:
-                return float(r.amount)
-            return float(r.qty or 0) * avg.get(r.label.strip().casefold(), 0.0)
+        def value(r) -> float:
+            """MATERIAL SARFI: qatorning «Сумма расхода» si (u allaqachon miqdor × narx) — qayta ko'paytirilmaydi.
+            Faqat summa bo'sh bo'lsa: miqdor × o'rtacha narx."""
+            return outflow_value(r.amount, r.qty, avg.get(r.label.strip().casefold(), 0.0))
 
         try:
             for r in await self._flows.rows("outflow", rng.start, rng.end):

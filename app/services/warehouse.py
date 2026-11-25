@@ -903,7 +903,8 @@ class WarehouseService:
             agg[0] += p.value or p.stock * p.avg_price
         for r in out_rows:
             p = by_name.get(_key(getattr(r, "label", "")))
-            value = float(getattr(r, "amount", 0) or 0) or float(getattr(r, "qty", 0) or 0) * (p.avg_price if p else 0.0)
+            amount = float(getattr(r, "amount", 0) or 0)       # «Сумма расхода» = miqdor × narx (tayyor)
+            value = amount if amount else float(getattr(r, "qty", 0) or 0) * (p.avg_price if p else 0.0)
             agg = out.setdefault(p.category if p and p.category else "", [0.0, 0.0])
             agg[1] += value
         return {k: (v[0], v[1]) for k, v in sorted(out.items(), key=lambda kv: -kv[1][0])}

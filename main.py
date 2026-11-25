@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -82,6 +83,16 @@ async def main() -> None:
         await warehouse.reset_directory_once(settings.db_path.parent)
     except Exception:
         logging.exception("Справочник ni tozalab bo'lmadi (keyingi ishga tushishda qayta urinadi)")
+
+    try:
+        # BIR MARTALIK: Dashboard «Material sarfi» uchun saqlangan Приход/Расход yozuvlari varaqdan qayta quriladi
+        # (kasrli summalar avval ×10 000 gacha noto'g'ri o'qilgan; import qilingan tarix ham qo'shiladi)
+        if not await db.fetchone("SELECT value FROM kv WHERE key = 'flows_rebuilt_v1'"):
+            done = await flows.rebuild_history(datetime.now(settings.timezone).date())
+            await db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('flows_rebuilt_v1', '1')")
+            logging.info("Приход/Расход tarixi qayta qurildi: %s", done)
+    except Exception:
+        logging.exception("Приход/Расход tarixini qayta qurib bo'lmadi (keyingi ishga tushishda qayta urinadi)")
 
     bot = Bot(
         token=settings.bot_token,
