@@ -1,7 +1,8 @@
-"""Telegram chap pastki "Menu" tugmasi: Boss va Admin uchun 📊 Dashboard (Mini App), boshqalarga oddiy menyu.
+"""Telegram chap pastki "Menu" tugmasi: Boss, Admin va Sklad nazoratchisi uchun 📊 Dashboard (Mini App),
+Ishchiga oddiy menyu.
 
-Tugma har bir chat uchun alohida o'rnatiladi (chat_id bilan): umumiy (hamma uchun) tugma qo'yilsa, Ishchi va
-Sklad nazoratchisi ham ko'rib, ochganda "ruxsat yo'q" xabarini olardi. Rol yoki til o'zgarganda qayta moslanadi."""
+Tugma har bir chat uchun alohida o'rnatiladi (chat_id bilan): umumiy (hamma uchun) tugma qo'yilsa, Ishchi ham
+ko'rib, ochganda "ruxsat yo'q" xabarini olardi. Rol yoki til o'zgarganda qayta moslanadi."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +19,7 @@ from app.storage.users import UserRepository
 logger = logging.getLogger(__name__)
 
 MENU_TEXT = "📊 Dashboard"
-DASHBOARD_ROLES = (Role.BOSS, Role.ADMIN)
+DASHBOARD_ROLES = (Role.BOSS, Role.ADMIN, Role.STOREKEEPER)
 
 
 async def sync_menu_button(bot: Bot, user: User) -> None:

@@ -72,19 +72,21 @@ def inspect_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
                   _btn(t["btn_deficit_products"], ProductCb(kind="def"))])
 
 
-def deficit_menu_kb(t: dict[str, str], can_download: bool, kind: str = "def") -> InlineKeyboardMarkup:
-    """Ro'yxatni ko'rish hammaga; yuklab olish tugmasi faqat ruxsati borlarga."""
+def deficit_menu_kb(t: dict[str, str], can_download: bool, kind: str = "def",
+                    dashboard: bool = False) -> InlineKeyboardMarkup:
+    """Ro'yxatni ko'rish hammaga; yuklab olish tugmasi faqat ruxsati borlarga; 📊 Dashboard — Boss/Admin/Sklad."""
     buttons = [_btn(t["btn_view"], PageCb(page=0, kind=kind))]
     if can_download:
-        buttons.append(_btn(t["btn_download"], MenuCb(action="download", kind=kind)))
-    return _grid(buttons, [[_btn(t["back"], ProductCb(kind="menu"))]])
+        buttons.append(_btn(t["btn_download_file"], MenuCb(action="download", kind=kind)))
+    return _grid(buttons, [[_btn(t["back"], ProductCb(kind="menu"))]] + (dashboard_rows(t) if dashboard else []))
 
 
 def download_kb(t: dict[str, str], kind: str = "def") -> InlineKeyboardMarkup:
+    """📊 Excel (.xlsx) va 📄 PDF. (Eski xabarlardagi CSV tugmasi ham ishlayveradi.)"""
     return _kb([
         [
-            _btn(t["pdf_btn"], DownloadCb(fmt="pdf", kind=kind)),
-            _btn(t["csv_btn"], DownloadCb(fmt="csv", kind=kind)),
+            _btn(t["xlsx_btn"], DownloadCb(fmt="xlsx", kind=kind)),
+            _btn(t["pdf_btn2"], DownloadCb(fmt="pdf", kind=kind)),
         ],
         [_btn(t["back"], MenuCb(action="back", kind=kind))],
     ])

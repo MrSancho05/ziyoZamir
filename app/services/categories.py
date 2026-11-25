@@ -28,33 +28,38 @@ DEFAULT_CATEGORIES: Tuple[DefaultCategory, ...] = (
                     ("petlya", "petlia", "petla", "ruchka", "salazka", "salaska", "napravlyayush", "zamok",
                      "opora", "nojka", "kryuchok", "kronshteyn", "podyomnik", "gazlift", "доводчик", "petl",
                      "петл", "ручк", "салазк", "направляющ", "замок", "опор", "ножк", "крючок", "кронштейн",
-                     "газлифт", "подъемник")),
+                     "газлифт", "подъемник",
+                     # mebel furniturasi: tiqinlar, oyoqchalar, mexanizmlar, burchaklar, profillar
+                     "механизм", "заглушк", "пробк", "каблук", "подпятник", "полкодержател", "уголок", "угольник",
+                     "профил", "рельс", "купе", "шпингалет", "вешалк", "карниз", "кольц", "планк", "плинтус")),
     DefaultCategory("Крепеж / Метизы", "🪛 Mix va Samorezlar", "🪛 Крепеж / Метизы",
                     "samorez, mix, bolt, gayka, yevrostyajka", "саморезы, гвозди, болты, гайки, евровинты",
                     ("samorez", "mix", "gvozd", "bolt", "gayka", "shayba", "vint", "shurup", "dyubel",
                      "yevrostyajka", "evrostyajka", "evrovint", "konfirmat", "shpilka", "skoba", "саморез",
                      "гвозд", "болт", "гайк", "шайб", "винт", "шуруп", "дюбел", "евростяжк", "евровинт",
-                     "конфирмат", "шпильк", "скоб", "метиз", "креп")),
+                     "конфирмат", "шпильк", "скоб", "метиз", "креп", "заклепк", "хомут", "резьб", "соединител", "анкер")),
     DefaultCategory("Клей и Химия", "🧪 Kley va Ximiya", "🧪 Клей и Химия",
                     "kley, PVA, kromka, germetik, lak", "клей, ПВА, кромка, герметик, лак",
                     ("kley", "pva", "akfix", "akfiks", "kromka", "germetik", "lak", "kraska", "rastvoritel",
                      "pena", "silikon", "morilka", "клей", "пва", "акфикс", "кромк", "герметик", "лак",
-                     "краск", "растворител", "пена", "силикон", "морилк", "химия")),
+                     "краск", "растворител", "пена", "силикон", "морилк", "химия", "разбавител", "шпатлевк", "эмульси", "затирк", "фуга", "масло", "грунт",
+                     "растворит", "ральф")),
     DefaultCategory("Поролон и Обивка", "🛋 Porolon va Qoplama", "🛋 Поролон и Обивка",
                     "porolon, mato, lipuchka, sintepon", "поролон, ткань, липучка, синтепон",
                     ("porolon", "lipuchka", "mato", "tkan", "sintepon", "velur", "kojzam", "ekokoja", "flok",
-                     "obivk", "spanbond", "поролон", "липучк", "ткан", "синтепон", "велюр", "кожзам",
-                     "экокож", "флок", "обивк", "спанбонд")),
+                     "obivk", "spanbond", "paralon", "поролон", "паралон", "липучк", "ткан", "синтепон", "велюр", "кожзам",
+                     "экокож", "флок", "обивк", "спанбонд", "матрас", "обои", "абой")),
     DefaultCategory("Расходники", "📦 Sarf materiallari", "📦 Расходники",
                     "shkurka, perchatka, skotch, meshok, plyonka", "шкурка, перчатки, скотч, мешки, плёнка",
                     ("shkurka", "nazhdak", "perchatka", "skotch", "meshok", "plyonka", "plenka", "streych",
                      "kist", "valik", "lenta", "шкурк", "наждак", "перчатк", "скотч", "мешок", "мешк",
-                     "плёнк", "пленк", "стрейч", "кист", "валик", "лент", "упаковк")),
+                     "плёнк", "пленк", "стрейч", "кист", "валик", "лент", "упаковк", "маск", "веник", "веревк", "сварочн", "баннер")),
     DefaultCategory("Инструменты", "🛠 Asbob-uskunalar", "🛠 Инструменты",
                     "ruletka, bita, sverlo, disk, pila", "рулетка, биты, свёрла, диски, пилы",
                     ("ruletka", "bita", "sverlo", "disk", "pila", "frez", "otvertka", "stepler", "molotok",
-                     "nojovka", "shurupovert", "рулетк", "бит", "сверл", "свёрл", "диск", "пил", "фрез",
-                     "отвертк", "отвёртк", "степлер", "молоток", "ножовк", "шуруповерт", "инструмент")),
+                     "nojovka", "shurupovert", "shrupovert", "рулетк", "бит", "сверл", "свёрл", "диск", "пил", "фрез",
+                     "отвертк", "отвёртк", "степлер", "молоток", "ножовк", "шуруповерт", "шруповерт", "инструмент", "перфоратор", "пистолет", "генератор",
+                     "болгарк", "дрел")),
 )
 
 _BY_NAME: Dict[str, DefaultCategory] = {c.name.casefold(): c for c in DEFAULT_CATEGORIES}
@@ -104,21 +109,26 @@ def _words(name: str) -> List[str]:
 def suggest(name: str, products: Iterable[Tuple[str, str]]) -> Optional[str]:
     """Yangi mahsulot nomiga mos kategoriya.
 
-    1) Katalogdagi o'xshash mahsulotlar (umumiy ildiz so'z: birinchi 5 harf) — eng ko'p uchragan kategoriyasi;
+    1) Katalogdagi o'xshash mahsulotlar: BIRINCHI so'zining ildizi (5 harf) bir xil bo'lganlari — eng ko'p
+       uchragan kategoriyasi. Faqat birinchi so'z: "Сверло для саморезов" — bu sverlo, saморез emas;
     2) ikki tilli (kirill/lotin) kalit so'zlar lug'ati.
     `products`: (mahsulot nomi, kategoriya) juftlari."""
-    roots = {w[:5] for w in _words(name)}
-    if roots:
+    words = _words(name)
+    if words:
+        root = words[0][:5]
         votes: Counter = Counter()
         for pname, cat in products:
-            if not cat:
-                continue
-            if roots & {w[:5] for w in _words(pname)}:
+            other = _words(pname)
+            if cat and other and other[0][:5] == root:
                 votes[cat.strip()] += 1
         if votes:
             return votes.most_common(1)[0][0]
+    # nomda ENG OLDIN uchragan kalit so'z yutadi (birinchi so'z odatda tovarning o'zi: "Ручка-скоба" — ручка),
+    # teng bo'lsa — uzunrog'i
     flat = normalize(name).replace(" ", "")
+    best: Optional[Tuple[int, int, str]] = None
     for kw, cat in _KEYWORDS:
-        if kw and kw in flat:
-            return cat
-    return None
+        pos = flat.find(kw) if kw else -1
+        if pos >= 0 and (best is None or (pos, -len(kw)) < (best[0], best[1])):
+            best = (pos, -len(kw), cat)
+    return best[2] if best else None

@@ -12,6 +12,7 @@ from app.keyboards.inline import deficit_menu_kb, inspect_menu_kb, pagination_kb
 from app.locales.texts import all_texts
 from app.models import DeficitItem, User
 from app.services.deficit import load_all_items
+from app.services.webapp_menu import DASHBOARD_ROLES
 from app.services.sheets import SheetsClient
 from app.storage.memory import UserStore
 from app.utils.formatting import fmt_num
@@ -30,8 +31,9 @@ KINDS = (KIND_ALL, KIND_DEFICIT)
 
 
 def _menu_kb(t: dict[str, str], user: User, kind: str):
-    # Yuklab olish tugmasi faqat DOWNLOAD_REPORTS ruxsati borlarga ko'rinadi
-    return deficit_menu_kb(t, can_download=has_permission(user.role, Permission.DOWNLOAD_REPORTS), kind=kind)
+    # Yuklab olish tugmasi faqat DOWNLOAD_REPORTS ruxsati borlarga ko'rinadi; 📊 Dashboard — Boss/Admin/Sklad
+    return deficit_menu_kb(t, can_download=has_permission(user.role, Permission.DOWNLOAD_REPORTS), kind=kind,
+                           dashboard=user.role in DASHBOARD_ROLES)
 
 
 def _count_text(t: dict[str, str], items: list[DeficitItem], kind: str) -> str:

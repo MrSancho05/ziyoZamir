@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.callbacks import WhCb
+from app.keyboards.webapp import dashboard_rows
 
 MAX_LABEL = 30
 
@@ -33,8 +34,10 @@ def grid(buttons: Sequence[InlineKeyboardButton],
     return kb.as_markup()
 
 
-def cancel_row(t: Dict[str, str]) -> List[InlineKeyboardButton]:
-    return [_b(t["wh_btn_cancel"], "cancel")]
+def cancel_row(t: Dict[str, str], back: bool = True) -> List[InlineKeyboardButton]:
+    """[⬅️ Orqaga] [❌ Bekor qilish]. Orqaga — bitta qadam ortga (holat saqlanadi), bekor — jarayonni yopadi."""
+    row = [_b(t["wh_btn_step_back"], "back")] if back else []
+    return row + [_b(t["wh_btn_cancel"], "cancel")]
 
 
 def _cat_label(label: str) -> str:
@@ -49,7 +52,7 @@ def categories_kb(t: Dict[str, str], cats: Sequence[str], cart_size: int) -> Inl
     nav = []
     if cart_size:
         nav.append([_b(f"🛒 ({cart_size})", "cart")])
-    nav.append(cancel_row(t))
+    nav.append(cancel_row(t, back=False))          # birinchi qadam: orqaga yo'q
     return grid(buttons, nav)
 
 
@@ -64,7 +67,7 @@ def products_kb(t: Dict[str, str], names: Sequence[str], page: int, pages: int,
             _b("▶️", "pg", page + 1) if page < pages - 1 else _b("·", "noop"),
         ])
     nav.append([_b(t["wh_btn_cats"], "cats")])
-    nav.append(cancel_row(t))
+    nav.append(cancel_row(t, back=False))          # "📂 Kategoriyalar" — orqaga tugmasi vazifasini bajaradi
     return grid(buttons, nav)
 
 
@@ -74,7 +77,7 @@ def search_kb(t: Dict[str, str], names: Sequence[str], allow_new: bool) -> Inlin
     if allow_new:
         nav.append([_b(t["wh_btn_new_product"], "new")])
     nav.append([_b(t["wh_btn_cats"], "cats")])
-    nav.append(cancel_row(t))
+    nav.append(cancel_row(t, back=False))
     return grid(buttons, nav)
 
 
@@ -109,7 +112,7 @@ def cart_kb(t: Dict[str, str], has_items: bool) -> InlineKeyboardMarkup:
     if has_items:
         buttons.append(_b(t["wh_btn_remove"], "rm"))
     nav = [[_b(t["wh_btn_save"], "save")]] if has_items else []
-    nav.append(cancel_row(t))
+    nav.append(cancel_row(t, back=has_items))     # orqaga: oxirgi qo'shilgan tovarni qayta tahrirlash
     return grid(buttons, nav)
 
 
@@ -122,7 +125,8 @@ def remove_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
 def pm_menu_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
     return grid([_b(t["wh_pm_add"], "pm", k="add"), _b(t["wh_pm_rename"], "pm", k="ren"),
                  _b(t["wh_pm_delete"], "pm", k="del"), _b(t["wh_pm_cats"], "cm"),
-                 _b(t["wh_pm_unpriced"], "unp")], [cancel_row(t)])
+                 _b(t["wh_pm_unpriced"], "unp"), _b(t["wh_pm_sync"], "pm", k="sync")],
+                [cancel_row(t, back=False)])
 
 
 def np_category_kb(t: Dict[str, str], cats: Sequence[str]) -> InlineKeyboardMarkup:
@@ -137,29 +141,29 @@ def suggest_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
 # ---------- 🏷 Kategoriyalar ----------
 def cat_menu_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
     return grid([_b(t["wh_cat_add"], "cmk", k="add"), _b(t["wh_cat_rename"], "cmk", k="ren"),
-                 _b(t["wh_cat_delete"], "cmk", k="del")], [cancel_row(t)])
+                 _b(t["wh_cat_delete"], "cmk", k="del")], [cancel_row(t, back=False)])
 
 
 def cat_pick_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
     return grid([_b(_cat_label(c), "cpk", i) for i, c in enumerate(labels)],
-                [[_b(t["wh_btn_back"], "cm")], cancel_row(t)])
+                [[_b(t["wh_btn_back"], "cm")], cancel_row(t, back=False)])
 
 
 # ---------- 💰 Narxi yo'q tovarlar ----------
 def unpriced_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
-    return grid([_b(f"💰 {_short(n, 26)}", "up", i) for i, n in enumerate(labels)], [cancel_row(t)])
+    return grid([_b(f"💰 {_short(n, 26)}", "up", i) for i, n in enumerate(labels)], [cancel_row(t, back=False)])
 
 
 def unpriced_price_kb(t: Dict[str, str], last_price: Optional[str]) -> InlineKeyboardMarkup:
     buttons = [_b(t["wh_btn_last_price"].format(price=last_price), "ulp")] if last_price else []
-    return grid(buttons, [[_b(t["wh_btn_back"], "unp")], cancel_row(t)], cols=1)
+    return grid(buttons, [[_b(t["wh_btn_back"], "unp")], cancel_row(t, back=False)], cols=1)
 
 
 def flows_reminder_kb(t: Dict[str, str], unpriced: int) -> InlineKeyboardMarkup:
     """17:30 eslatmasidagi tezkor tugmalar."""
     buttons = [_b(t["flows_btn_in"], "go", k="in"), _b(t["flows_btn_out"], "go", k="out")]
     nav = [[_b(t["wh_btn_unpriced"].format(count=unpriced), "unp")]] if unpriced else []
-    return grid(buttons, nav)
+    return grid(buttons, nav + dashboard_rows(t))
 
 
 def np_unit_kb(t: Dict[str, str], units: Sequence[str]) -> InlineKeyboardMarkup:
@@ -171,4 +175,4 @@ def quick_value_kb(t: Dict[str, str], action: str, label: str) -> InlineKeyboard
 
 
 def confirm_kb(t: Dict[str, str], yes_label: str) -> InlineKeyboardMarkup:
-    return grid([_b(yes_label, "ok"), _b(t["wh_btn_cancel"], "cancel")])
+    return grid([_b(yes_label, "ok")], [cancel_row(t)], cols=1)

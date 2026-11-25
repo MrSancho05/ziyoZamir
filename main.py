@@ -64,6 +64,11 @@ async def main() -> None:
         await warehouse.migrate_schema()
     except Exception:
         logging.exception("Jadval ustunlarini tekshirib bo'lmadi (bot ishlashda davom etadi)")
+    try:
+        # Справочник dagi, lekin Остатки и Расходы da yo'q mahsulotlar avtomatik kategoriya bilan qo'shiladi
+        await warehouse.sync_from_directory()
+    except Exception:
+        logging.exception("Справочник sinxronini bajarib bo'lmadi (bot ishlashda davom etadi)")
 
     bot = Bot(
         token=settings.bot_token,

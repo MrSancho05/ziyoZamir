@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery
@@ -11,7 +12,9 @@ from app.keyboards.callbacks import DownloadCb, MenuCb
 from app.keyboards.inline import download_kb
 from app.models import User
 from app.services.reports.csv_report import build_all_products_csv, build_deficit_csv
-from app.services.reports.pdf import build_all_products_pdf, build_deficit_pdf
+from app.services.reports.deficit_report import build_pdf as build_report_pdf
+from app.services.reports.deficit_report import build_rows, build_xlsx
+from app.services.warehouse import WarehouseService
 from app.storage.memory import UserStore
 
 logger = logging.getLogger(__name__)
@@ -37,30 +40,42 @@ async def open_download_menu(callback: CallbackQuery, callback_data: MenuCb, t: 
     await callback.answer()
 
 
-@router.callback_query(DownloadCb.filter(F.fmt == "pdf"))
-async def download_pdf(callback: CallbackQuery, callback_data: DownloadCb, t: dict[str, str],
-                       user: User, store: UserStore, settings: Settings) -> None:
+@router.callback_query(DownloadCb.filter(F.fmt.in_({"pdf", "xlsx"})))
+async def download_report(callback: CallbackQuery, callback_data: DownloadCb, t: dict[str, str], lang: str,
+                          user: User, store: UserStore, settings: Settings, warehouse: WarehouseService) -> None:
+    """📊 Excel / 📄 PDF: №, nom, kategoriya, birlik, qoldiq, min. qoldiq, yetishmayotgan miqdor."""
     kind = _kind(callback_data.kind)
     items = store.get_products(user.id, kind)
     if not items:
         await callback.answer(t["no_data"], show_alert=True)
         return
+    await callback.answer("⏳")  # callback muddati tugab qolmasligi uchun darrov
 
-    await callback.answer()  # callback muddati tugab qolmasligi uchun darrov
-
-    build = build_all_products_pdf if kind == KIND_ALL else build_deficit_pdf
     try:
-        # PDF dagi vaqt O'zbekiston vaqti (settings.timezone, standart Asia/Tashkent) bilan yoziladi
-        pdf_bytes = await asyncio.to_thread(build, items, t, settings.timezone)
+        catalog = await warehouse.catalog()
     except Exception:
-        logger.exception("PDF yaratishda xatolik")
+        logger.exception("Katalogni o'qib bo'lmadi (kategoriya/birliksiz davom etiladi)")
+        catalog = []
+    rows = build_rows(items, catalog, lang)
+    title = t["rep_title_all"] if kind == KIND_ALL else t["rep_title_def"]
+    stamp = datetime.now(settings.timezone).strftime("%Y-%m-%d")
+    xlsx = callback_data.fmt == "xlsx"
+    try:
+        # vaqt O'zbekiston vaqti (settings.timezone, Asia/Tashkent) bilan yoziladi
+        data = await asyncio.to_thread(build_xlsx if xlsx else build_report_pdf, rows, t, title, settings.timezone)
+    except ImportError:
+        logger.exception("openpyxl o'rnatilmagan: pip install -r requirements.txt")
+        await callback.message.answer(t["xlsx_missing"])
+        return
+    except Exception:
+        logger.exception("Hisobot faylini yaratishda xatolik")
         await callback.message.answer(t["pdf_error"])
         return
-
-    filename = t["all_pdf_filename"] if kind == KIND_ALL else t["pdf_filename"]
+    base = t["rep_file_all"] if kind == KIND_ALL else t["rep_file_def"]
+    filename = f"{base}_{stamp}.{'xlsx' if xlsx else 'pdf'}"
     await callback.message.answer_document(
-        BufferedInputFile(pdf_bytes, filename=filename),
-        caption=t["success_pdf"],
+        BufferedInputFile(data, filename=filename),
+        caption=t["rep_caption"].format(n=len(rows), short=sum(1 for r in rows if r.short > 0)),
     )
 
 

@@ -6,8 +6,8 @@ Marshrutlar:
     GET /healthz              -> "ok"
 
 Xavfsizlik: /api/dashboard faqat Telegram imzolagan `initData` bilan ishlaydi (X-Telegram-Init-Data sarlavhasi,
-bot tokeni bilan HMAC-SHA256 tekshiriladi) va faqat bazadagi faol BOSS yoki ADMIN uchun. Sahifaning o'zida
-hech qanday maxfiy ma'lumot yo'q.
+bot tokeni bilan HMAC-SHA256 tekshiriladi) va faqat bazadagi faol BOSS, ADMIN yoki SKLAD NAZORATCHISI uchun. Sahifaning o'zida
+hech qanday maxfiy ma'lumot yo'q. (Sklad nazoratchisi ham ko'radi.)
 
 Tezlik / kvota: har bir (davr, mavsum, siljish) uchun xom ma'lumot TTL keshda saqlanadi (standart 60 s) va bir
 vaqtdagi bir xil so'rovlar bitta o'qishga birlashtiriladi. Til faqat yorliqlarni o'zgartiradi, ma'lumot qayta
@@ -42,7 +42,7 @@ HTML_PATH = Path(__file__).resolve().parent.parent / "webapp" / "dashboard.html"
 CACHE_TTL = 60.0
 INIT_DATA_MAX_AGE = 24 * 3600
 MAX_BACK = 60                       # orqaga eng ko'p 60 davr
-ALLOWED_ROLES = (Role.BOSS, Role.ADMIN)
+ALLOWED_ROLES = (Role.BOSS, Role.ADMIN, Role.STOREKEEPER)
 
 
 # ---------------- Telegram initData tekshiruvi ----------------

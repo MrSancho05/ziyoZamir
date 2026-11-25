@@ -235,6 +235,10 @@ async def noop(callback: CallbackQuery) -> None:
 async def pm_action(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
                     warehouse: WarehouseService) -> None:
     await state.clear()
+    if callback_data.k == "sync":
+        await callback.answer("⏳")
+        await _run_directory_sync(callback.message, t, warehouse)
+        return
     if callback_data.k == "add":
         await state.update_data(np={"ret": None}, cart=[])
         await state.set_state(WhSt.np_name)
@@ -358,7 +362,7 @@ async def _pick(target: Message, t: Dict[str, str], state: FSMContext, warehouse
     elif flow == FLOW_DEL:
         await state.update_data(act={"kind": "del", "name": product.name}, view="item")
         await state.set_state(WhSt.confirm)
-        await _show(target, t["wh_del_confirm"].format(name=escape(product.name)),
+        await _show(target, t["wh_del_confirm2"].format(name=escape(product.name)),
                     kb.confirm_kb(t, t["wh_btn_yes_delete"]), edit)
     else:
         await _start_item(target, t, state, product, edit)
@@ -372,12 +376,34 @@ async def _start_item(target: Message, t: Dict[str, str], state: FSMContext, pro
            "mode": "unit"}
     await state.update_data(cur=cur, view="item")
     if flow == FLOW_IN and product.pack > 1:
-        await state.set_state(WhSt.mode)
-        await _show(target, t["wh_mode_prompt"].format(name=escape(product.name), pack=_n(product.pack),
-                                                       unit=escape(product.unit)),
-                    kb.mode_kb(t, _n(product.pack), product.unit), edit)
+        await _show_mode(target, t, state, edit)
         return
     await _ask_qty(target, t, state, edit)
+
+
+async def _show_mode(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
+    cur = (await state.get_data())["cur"]
+    await state.set_state(WhSt.mode)
+    await _show(target, t["wh_mode_prompt"].format(name=escape(cur["name"]), pack=_n(cur["pack"]),
+                                                   unit=escape(cur["unit"])),
+                kb.mode_kb(t, _n(cur["pack"]), cur["unit"]), edit)
+
+
+BOX_UNITS = ("упак", "уп", "кор", "коробка", "karobka", "quti", "pack", "box")
+
+
+def _qty_tip(t: Dict[str, str], cur: Dict[str, Any]) -> str:
+    """Karobka / dona chalkashligining oldini olish uchun aniq misol."""
+    unit = str(cur.get("unit") or "").strip().lower().rstrip(".")
+    pack = float(cur.get("pack") or 1)
+    if cur.get("mode") == "pack":
+        return t["wh_qty_tip_pack_mode"].format(pack=_n(pack), unit=escape(cur["unit"]), total=_n(2 * pack))
+    if unit in BOX_UNITS:
+        return t["wh_qty_tip_box"]
+    if unit in ("шт", "dona", "штук"):
+        example = pack if pack > 1 else 200
+        return t["wh_qty_tip_pcs"].format(pack=_n(example), total=_n(2 * example))
+    return t["wh_qty_tip_other"].format(unit=escape(cur["unit"]))
 
 
 async def _ask_qty(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
@@ -385,13 +411,12 @@ async def _ask_qty(target: Message, t: Dict[str, str], state: FSMContext, edit: 
     cur = data["cur"]
     unit = t["wh_unit_box"] if cur.get("mode") == "pack" else cur["unit"]
     await state.set_state(WhSt.qty)
-    if data.get("flow") == FLOW_OUT:
-        # savatda shu mahsulotdan oldin olingani ham hisobga olinadi
-        taken = sum(it["qty"] for it in data.get("cart", []) if it["name"] == cur["name"])
-        text = t["wh_qty_prompt_out"].format(name=escape(cur["name"]), stock=_n(cur["stock"] - taken),
-                                             unit=escape(unit))
-    else:
-        text = t["wh_qty_prompt_in"].format(name=escape(cur["name"]), unit=escape(unit))
+    # savatda shu mahsulotdan oldin olingani ham hisobga olinadi
+    taken = sum(it["qty"] for it in data.get("cart", []) if it["name"] == cur["name"]) \
+        if data.get("flow") == FLOW_OUT else 0.0
+    key = "wh_qty_prompt_out" if data.get("flow") == FLOW_OUT else "wh_qty_prompt_in"
+    text = t[key].format(name=escape(cur["name"]), stock=_n(cur["stock"] - taken), unit=escape(unit),
+                         base_unit=escape(cur["unit"]), tip=_qty_tip(t, cur))
     await _show(target, text, kb.cancel_kb(t), edit)
 
 
@@ -421,23 +446,29 @@ async def enter_qty(message: Message, t: Dict[str, str], state: FSMContext,
     cur["qty_in"] = value
     await state.update_data(cur=cur)
     if data.get("flow") == FLOW_IN:
-        try:
-            last = await warehouse.last_price(cur["name"])
-        except Exception:
-            logger.exception("Oxirgi narxni o'qib bo'lmadi")
-            last = None
-        if last and cur.get("mode") == "pack":
-            last = last * cur["pack"]
-        cur["last_price"] = last
-        await state.update_data(cur=cur)
-        await state.set_state(WhSt.price)
-        unit = t["wh_unit_box"] if cur.get("mode") == "pack" else cur["unit"]
-        await message.answer(t["wh_price_prompt"].format(unit=escape(unit)),
-                             reply_markup=kb.price_kb(t, _n(last) if last else None))
+        await _ask_price(message, t, state, warehouse, edit=False)
     else:
         cur["qty"] = value
         await state.update_data(cur=cur)
         await _ask_who(message, t, state, warehouse, edit=False)
+
+
+async def _ask_price(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                     edit: bool) -> None:
+    cur = dict((await state.get_data())["cur"])
+    try:
+        last = await warehouse.last_price(cur["name"])
+    except Exception:
+        logger.exception("Oxirgi narxni o'qib bo'lmadi")
+        last = None
+    if last and cur.get("mode") == "pack":
+        last = last * cur["pack"]
+    cur["last_price"] = last
+    await state.update_data(cur=cur)
+    await state.set_state(WhSt.price)
+    unit = t["wh_unit_box"] if cur.get("mode") == "pack" else cur["unit"]
+    await _show(target, t["wh_price_prompt"].format(unit=escape(unit)),
+                kb.price_kb(t, _n(last) if last else None), edit)
 
 
 async def _set_price(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
@@ -551,6 +582,11 @@ async def _set_who(target: Message, t: Dict[str, str], state: FSMContext, wareho
     if flow == FLOW_IN:
         await _add_to_cart(target, t, state, edit)
         return
+    await _ask_purpose(target, t, state, edit)
+
+
+async def _ask_purpose(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
+    data = await state.get_data()
     recent: List[str] = []
     for it in reversed(data.get("cart", [])):
         p = it.get("purpose")
@@ -968,7 +1004,7 @@ async def confirm_action(callback: CallbackQuery, t: Dict[str, str], state: FSMC
             text = t["wh_rn_done"].format(new=escape(act["new"]), count=sum(changed.values()))
         elif act.get("kind") == "del":
             await warehouse.delete_product(act["name"])
-            text = t["wh_del_done"].format(name=escape(act["name"]))
+            text = t["wh_del_done2"].format(name=escape(act["name"]))
         elif act.get("kind") == "cdel":
             count = (await warehouse.category_counts()).get(act["name"].casefold(), 0)
             if count:
@@ -1229,6 +1265,110 @@ async def cat_rename_text(message: Message, t: Dict[str, str], state: FSMContext
     await message.answer(t["wh_cat_renamed"].format(old=escape(cat_label(old, _lang(t))), new=escape(new),
                                                     count=count))
     await _show_cat_menu(message, t, state, warehouse, edit=False)
+
+
+# ---------------- 🔄 Справочник -> Остатки и Расходы sinxroni ----------------
+async def _run_directory_sync(target: Message, t: Dict[str, str], warehouse: WarehouseService) -> None:
+    try:
+        res = await warehouse.sync_from_directory()
+    except Exception:
+        logger.exception("Справочник sinxronida xatolik")
+        await target.answer(t["wh_save_error"])
+        return
+    added, categorized = res["added"], res.get("categorized", [])
+    if not added and not categorized:
+        await _show(target, t["wh_sync_none"].format(n=res["directory"]), kb.pm_menu_kb(t), True)
+        return
+    lang = _lang(t)
+    lines = [f"• {escape(n)} — {escape(cat_label(c, lang))}" for n, c in added[:25]]
+    if len(added) > 25:
+        lines.append(f"… +{len(added) - 25}")
+    text = (t["wh_sync_done"].format(n=len(added), total=res["directory"], list="\n".join(lines)) if added
+            else t["wh_sync_none"].format(n=res["directory"]))
+    if categorized:
+        text += "\n\n" + t["wh_sync_categorized"].format(n=len(categorized))
+    if res["fallback"]:
+        text += "\n\n" + t["wh_sync_fallback"].format(n=res["fallback"], cat=escape(cat_label("Расходники", lang)))
+    await _show(target, text, kb.pm_menu_kb(t), True)
+
+
+# ---------------- ⬅️ Orqaga: har bir qadamda bitta qadam ortga ----------------
+@router.callback_query(StateFilter(WhSt), WhCb.filter(F.a == "back"))
+async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                    warehouse: WarehouseService) -> None:
+    await callback.answer()
+    st = await state.get_state()
+    data = await state.get_data()
+    flow = data.get("flow", FLOW_IN)
+    cur = data.get("cur") or {}
+    msg = callback.message
+
+    # --- Kirim / Chiqim ---
+    if st == WhSt.mode.state:
+        await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.qty.state:
+        if flow == FLOW_IN and float(cur.get("pack") or 1) > 1:
+            await _show_mode(msg, t, state, edit=True)
+        else:
+            await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.price.state:
+        await _ask_qty(msg, t, state, edit=True)
+    elif st == WhSt.who.state:
+        if flow == FLOW_IN:
+            await _ask_price(msg, t, state, warehouse, edit=True)
+        else:
+            await _ask_qty(msg, t, state, edit=True)
+    elif st == WhSt.purpose.state:
+        await _ask_who(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.search.state and data.get("view") == "cart" and data.get("cart"):
+        # savat: oxirgi qo'shilgan tovar savatdan olinib, oxirgi qadami qayta ochiladi
+        cart = list(data["cart"])
+        last = cart.pop()
+        await state.update_data(cart=cart, cur=last, view="item")
+        if flow == FLOW_IN:
+            await _ask_who(msg, t, state, warehouse, edit=True)
+        else:
+            await _ask_purpose(msg, t, state, edit=True)
+
+    # --- ➕ Yangi mahsulot ---
+    elif st == WhSt.np_name.state:
+        ret = (data.get("np") or {}).get("ret")
+        if ret in (FLOW_IN, FLOW_OUT):
+            await state.update_data(flow=ret, np=None)
+            await _show_categories(msg, t, state, warehouse, edit=True)
+        else:
+            await state.clear()
+            await _show(msg, t["wh_pm_title"], kb.pm_menu_kb(t), True)
+    elif st == WhSt.np_cat.state:
+        await state.set_state(WhSt.np_name)
+        await _show(msg, t["wh_np_name"], kb.cancel_kb(t), True)
+    elif st == WhSt.np_unit.state:
+        await _np_ask_category(msg, t, state, data.get("np_cats", []), edit=True)
+    elif st == WhSt.np_pack.state:
+        await _np_ask_unit(msg, t, state, edit=True)
+    elif st == WhSt.np_min.state:
+        await _np_ask_pack(msg, t, state, (data.get("np") or {}).get("unit", "шт"), edit=True)
+    elif st == WhSt.np_confirm.state:
+        await _np_ask_min(msg, t, state, float((data.get("np") or {}).get("pack", 1)), edit=True)
+
+    # --- tahrirlash / o'chirish / kategoriyalar / narxlar ---
+    elif st == WhSt.rn_name.state:
+        await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.confirm.state:
+        kind = (data.get("act") or {}).get("kind")
+        if kind == "ren":
+            await state.set_state(WhSt.rn_name)
+            await _show(msg, t["wh_rn_prompt"].format(name=escape(data["act"]["old"])), kb.cancel_kb(t), True)
+        elif kind == "cdel":
+            await _show_cat_menu(msg, t, state, warehouse, edit=True)
+        else:
+            await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st in (WhSt.cat_name.state, WhSt.cat_rn.state):
+        await _show_cat_menu(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.unp_price.state:
+        await _show_unpriced(msg, t, state, warehouse, edit=True)
+    else:
+        await _show_categories(msg, t, state, warehouse, edit=True)
 
 
 # ---------------- eskirgan tugmalar ----------------
