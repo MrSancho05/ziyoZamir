@@ -8,7 +8,7 @@ from aiogram import Bot
 
 from app.core.permissions import Role
 from app.keyboards.inline import attendance_start_kb, digest_kb, report_toggle_kb, shop_enter_kb
-from app.keyboards.warehouse import flows_reminder_kb
+from app.keyboards.warehouse import flows_reminder_kb, unpriced_reminder_kb
 from app.locales.texts import TEXTS, get_texts, month_name
 from app.services.access import safe_send
 from app.services.attendance import AttendanceService
@@ -31,6 +31,8 @@ from app.services.digest import (
     render_digest,
     render_exec_summary,
     render_flows_daily,
+    unpriced_boss_text,
+    unpriced_reminder_text,
 )
 from app.services.flows import FlowDelta, FlowsService
 from app.services.notify import deliver_once, staff_recipients
@@ -79,7 +81,9 @@ class OpsScheduler:
                  attendance_deadline_at: time, attendance_send_at: time, flows_report_at: time,
                  activity_check_at: time, auto_send_minutes: int, flow_tabs: dict[str, str],
                  att_store: AttendanceStore, warehouse: WarehouseService, report_cache: ReportCache,
-                 flows_reminder_at: time, digest_at: time, summary_at: time = time(20, 0)) -> None:
+                 flows_reminder_at: time, digest_at: time, summary_at: time = time(20, 0),
+                 unpriced_first_minutes: int = 60, unpriced_warn_at: time = time(11, 0),
+                 unpriced_deadline_at: time = time(12, 0)) -> None:
         self._bot, self._repo, self._log, self._pending = bot, repo, log, pending
         self._attendance, self._shop, self._flows = attendance, shop, flows
         self._tz, self._hour = tz, report_hour
@@ -94,6 +98,9 @@ class OpsScheduler:
         self._flows_rem_at = flows_reminder_at
         self._digest_at = digest_at
         self._summary_at = summary_at
+        self._unp_first = timedelta(minutes=unpriced_first_minutes)
+        self._unp_warn_at, self._unp_deadline_at = unpriced_warn_at, unpriced_deadline_at
+        self._unp_synced: datetime | None = None
         self._retry_at: dict[str, datetime] = {}
 
     async def run(self) -> None:
@@ -106,7 +113,7 @@ class OpsScheduler:
         now = now or datetime.now(self._tz)
         # Eslatma va muddat xabarlari birinchi turadi: keyingi (sekin) Google Sheets vazifalari ularni kechiktirmasin
         for job in (self._shop_reminder, self._shop_deadline, self._attendance_deadline,
-                    self._auto_send, self._attendance_auto_send, self._flows_reminder,
+                    self._auto_send, self._attendance_auto_send, self._flows_reminder, self._unpriced_watch,
                     self._flows_daily, self._activity_check, self._exec_summary, self._digests,
                     self._shop_reports,
                     self._flows_reports):
@@ -449,7 +456,91 @@ class OpsScheduler:
         except Exception:
             logger.exception("Ijroiya xulosasi: ombor qoldig'ini o'qib bo'lmadi")
             d.errors.append("stock")
+        await self._collect_extras(d, day, day)
         return d
+
+    # ---------------- 🧾 / 🆕 / 📦 kategoriya / ⚠️ narxsiz — hisobotlar uchun qo'shimcha ma'lumot ----------------
+    async def _collect_extras(self, d: Any, start: date, end: date, pstart: date | None = None,
+                              pend: date | None = None) -> None:
+        """Kunlik xulosa (ExecDay) va yig'ma hisobot (DigestData) uchun umumiy bo'limlar. Har biri alohida:
+        bittasi o'qilmasa, qolganlari baribir chiqadi."""
+        other = getattr(self._wh, "other", None)
+        if other is not None:
+            try:
+                d.other = await other.summary(start, end)
+                if pstart is not None:
+                    d.other_prev = await other.summary(pstart, pend)
+            except Exception:
+                logger.exception("Hisobot: «Прочие расходы» ni o'qib bo'lmadi")
+        log = getattr(self._wh, "product_log", None)
+        if log is not None:
+            try:
+                d.new_products = await log.between(start, end)
+            except Exception:
+                logger.exception("Hisobot: yangi mahsulotlar jurnalini o'qib bo'lmadi")
+        try:
+            d.cat_values = await self._wh.category_values(await self._flows.rows("outflow", start, end))
+        except Exception:
+            logger.exception("Hisobot: kategoriyalar bo'yicha qiymatni hisoblab bo'lmadi")
+        store = getattr(self._wh, "unpriced_store", None)
+        if store is not None:
+            try:
+                today = datetime.now(self._tz).date().isoformat()
+                # Boss nazorati: o'tgan kunlardan qolgan (12:00 muddati o'tgan) narxsiz kirimlar
+                d.unpriced_ctl = [it for it in await store.open_items() if it.entry_date < today]
+            except Exception:
+                logger.exception("Hisobot: narxsiz kirimlar nazoratini o'qib bo'lmadi")
+
+    # ---------------- 💰 narxsiz kirimlar: 1-eslatma, 11:00 ogohlantirish, 12:00 Boss nazorati ----------------
+    async def _unpriced_watch(self, now: datetime) -> None:
+        store = getattr(self._wh, "unpriced_store", None)
+        if store is None or now.weekday() == 6:              # yakshanba — dam olish
+            return
+        if self._unp_synced is None or now - self._unp_synced >= timedelta(minutes=10):
+            # haqiqiy manba — Приход varag'i (qo'lda yozilgan narxlar ham hisobga olinadi)
+            try:
+                rows = await self._wh.unpriced()
+                today = now.date().isoformat()
+                await store.reconcile([(r.row, r.name, r.qty, r.unit, r.day.isoformat() if r.day else today)
+                                       for r in rows], int(now.timestamp()))
+                self._unp_synced = now
+            except Exception:
+                logger.exception("Narxsiz kirimlarni Приход bilan moslab bo'lmadi")
+                return
+        items = await store.open_items()
+        if not items:
+            return
+        today = now.date()
+        ts = int(now.timestamp())
+        if time(8, 0) <= now.time() < time(20, 0):
+            due = [it for it in items if it.first_reminded is None and ts - it.created_at >= self._unp_first.total_seconds()]
+            if due:
+                await self._send_unpriced(items, today, "unp_first")
+                await store.mark([it.id for it in due], "first_reminded", ts)
+        key = today.isoformat()
+        if self._unp_warn_at <= now.time() < self._unp_deadline_at and not await self._log.was_sent("unp_warn", key):
+            late = [it for it in items if it.entry_date < key or it.first_reminded is not None]
+            if late:
+                await self._send_unpriced(items, today, "unp_warn")
+                await store.mark([it.id for it in late], "second_reminded", ts)
+            await self._log.mark_sent("unp_warn", key)
+        if now.time() >= self._unp_deadline_at and not await self._log.was_sent("unp_escalate", key):
+            overdue = [it for it in items if it.entry_date < key]
+            if overdue:
+                await store.mark([it.id for it in overdue if it.escalated_at is None], "escalated_at", ts)
+                await send_to_bosses(self._bot, self._repo,
+                                     lambda t, lang: unpriced_boss_text(t, overdue, today))
+            await self._log.mark_sent("unp_escalate", key)
+
+    async def _send_unpriced(self, items: list, today: date, kind: str) -> None:
+        """Sklad nazoratchilariga (bo'lmasa — adminlarga): bugungi va o'tgan kunlardan qolganlar alohida."""
+        users = await self._repo.list_by_role(Role.STOREKEEPER) or await self._repo.list_by_role(Role.ADMIN)
+        for user in users:
+            t = get_texts(user.lang)
+            await safe_send(self._bot, user.id, unpriced_reminder_text(t, items, today, strict=kind == "unp_warn",
+                                                                      deadline=self._unp_deadline_at),
+                            reply_markup=unpriced_reminder_kb(t, len(items)))
+
 
     # ---------------- 📊 yig'ma hisobotlar: shanba 20:30 va oy oxiri 20:30 ----------------
     async def _digests(self, now: datetime) -> None:
@@ -498,6 +589,7 @@ class OpsScheduler:
         except Exception:
             logger.exception("Yig'ma hisobot: davomatni o'qib bo'lmadi")
             d.errors.append("att")
+        await self._collect_extras(d, start, end, pstart, pend)
         return d
 
     async def _send_digest(self, kind: str, key: str, data: DigestData) -> int:

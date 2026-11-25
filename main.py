@@ -16,6 +16,7 @@ from app.services.scheduler import ReportScheduler
 from app.services.reports.pdf import register_fonts
 from app.services.shop import ShopService
 from app.services.sheets import SheetsClient
+from app.services.other_expenses import OtherExpensesService
 from app.services.warehouse import WarehouseService
 from app.services.web_server import DashboardService, WebServer, create_app, make_authorizer
 from app.keyboards.webapp import set_webapp_url
@@ -23,6 +24,7 @@ from app.services.webapp_menu import sync_all_menu_buttons
 from app.storage.attendance_store import AttendanceStore
 from app.storage.categories import CategoryStore
 from app.storage.norms import NormMemory
+from app.storage.tracking import ProductLog, UnpricedStore
 from app.storage.database import Database
 from app.storage.memory import UserStore
 from app.storage.flows_store import FlowStore
@@ -60,6 +62,13 @@ async def main() -> None:
     warehouse.cat_store = CategoryStore(db)            # umumiy kategoriyalar (6 ta standart bilan)
     await warehouse.cat_store.ensure_seeded()
     warehouse.norm_store = NormMemory(db)              # oxirgi Мин. остаток tavsiyalari
+    warehouse.product_log = ProductLog(db)             # 🆕 yangi mahsulotlar (Boss hisobotlari uchun)
+    warehouse.unpriced_store = UnpricedStore(db)       # narxsiz kirimlar: eslatmalar va 12:00 nazorati
+    warehouse.other = OtherExpensesService(sheets, settings.other_expenses_tab, settings.timezone)
+    try:
+        await warehouse.other.ensure_sheet()           # «Прочие расходы» varag'i yo'q bo'lsa yaratiladi
+    except Exception:
+        logging.exception("«%s» varag'ini tekshirib bo'lmadi", settings.other_expenses_tab)
     report_cache = ReportCache(db)
     try:
         # yetishmagan ustunlar jadval OXIRIGA qo'shiladi (o'rtaga hech qachon); qayta ishga tushirish xavfsiz
@@ -110,7 +119,9 @@ async def main() -> None:
         flows_report_at=settings.flows_report_at, activity_check_at=settings.activity_check_at,
         auto_send_minutes=settings.auto_send_minutes, flow_tabs=flow_tabs, att_store=att_store,
         warehouse=warehouse, report_cache=report_cache, flows_reminder_at=settings.flows_reminder_at,
-        digest_at=settings.digest_at, summary_at=settings.summary_at)
+        digest_at=settings.digest_at, summary_at=settings.summary_at,
+        unpriced_first_minutes=settings.unpriced_first_minutes, unpriced_warn_at=settings.unpriced_warn_at,
+        unpriced_deadline_at=settings.unpriced_deadline_at)
     ops_task = asyncio.create_task(ops.run())
 
     # 📊 Jonli Dashboard: polling bilan bir jarayonda (aiohttp). Port band bo'lsa ham bot ishlayveradi

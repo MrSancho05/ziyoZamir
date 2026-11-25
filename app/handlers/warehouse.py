@@ -89,6 +89,7 @@ class WhSt(StatesGroup):
     ed_cat = State()         # ✏️ yangi kategoriya tanlanmoqda
     ed_min = State()         # ✏️ yangi Мин. норматив kutilmoqda
     over = State()           # 📤 qoldiqdan ko'p chiqim: tanlov kutilmoqda
+    seq_price = State()      # 💰 narxlarni birma-bir kiritish
 
 
 # ---------------- yordamchilar ----------------
@@ -709,8 +710,9 @@ async def save_cart(callback: CallbackQuery, t: Dict[str, str], user: User, stat
             items = [InflowItem(name=it["name"], unit=it["unit"], qty=it["qty"], price=it["price"],
                                 supplier=it["who"], boxes=it.get("boxes") or 0.0, pack=it["pack"])
                      for it in cart]
-            await warehouse.save_inflow(items)
+            rows = await warehouse.save_inflow(items)
             tab = warehouse.inflow_tab
+            await _track_inflow(warehouse, items, rows)
         else:
             items = [OutflowItem(name=it["name"], unit=it["unit"], qty=it["qty"], purpose=it.get("purpose", ""),
                                  recipient=it["who"], stock_before=it.get("stock")) for it in cart]
@@ -959,14 +961,14 @@ async def _np_confirm(target: Message, t: Dict[str, str], state: FSMContext, min
 
 @router.callback_query(WhSt.np_min, WhCb.filter(F.a == "mn0"))
 async def np_min_default(callback: CallbackQuery, t: Dict[str, str], state: FSMContext) -> None:
-    await _np_confirm(callback.message, t, state, 0.0, edit=True)
-    await callback.answer()
+    """Eski xabardagi "0" tugmasi: endi normativ majburiy — tushuntiriladi."""
+    await callback.answer(t["wh_min_required_alert"], show_alert=True)
 
 
 @router.message(WhSt.np_min, F.text)
 async def np_min_text(message: Message, t: Dict[str, str], state: FSMContext) -> None:
     value = parse_number(message.text)
-    error = _number_error(t, message.text, value, "min")
+    error = _number_error(t, message.text, value, "min_req")
     if error:
         np = (await state.get_data()).get("np") or {}
         sug = (await state.get_data()).get("norm_sug")
@@ -977,10 +979,14 @@ async def np_min_text(message: Message, t: Dict[str, str], state: FSMContext) ->
 
 @router.callback_query(WhSt.np_confirm, WhCb.filter(F.a == "ok"))
 async def np_save(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
-                  warehouse: WarehouseService) -> None:
+                  warehouse: WarehouseService, user: Optional[User] = None) -> None:
     np = (await state.get_data()).get("np") or {}
     if not np.get("name"):
         await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    if float(np.get("min", 0) or 0) <= 0:                   # Мин. норматив majburiy
+        await callback.answer(t["wh_min_required_alert"], show_alert=True)
+        await _np_ask_min(callback.message, t, state, float(np.get("pack", 1)), edit=True, warehouse=warehouse)
         return
     await callback.answer("⏳")
     try:
@@ -995,6 +1001,13 @@ async def np_save(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
         await callback.message.answer(t["error"])
         return
     await _remember_norm(warehouse, float(np.get("min", 0)), np.get("unit", ""), np.get("cat", ""))
+    if warehouse.product_log is not None:                   # 🆕 Boss hisobotlari uchun
+        try:
+            await warehouse.product_log.add(warehouse.today(), user.id if user else None,
+                                            user.full_name if user else "", np["name"], np.get("cat", ""),
+                                            np.get("unit", ""), float(np.get("min", 0)))
+        except Exception:
+            logger.exception("Yangi mahsulot jurnaliga yozib bo'lmadi")
     ret = np.get("ret")
     flow = ret if ret in (FLOW_IN, FLOW_OUT) else FLOW_IN
     data = await state.get_data()
@@ -1044,6 +1057,8 @@ async def confirm_action(callback: CallbackQuery, t: Dict[str, str], state: FSMC
     try:
         if act.get("kind") == "ren":
             changed = await warehouse.rename_product(act["old"], act["new"])
+            if warehouse.product_log is not None:
+                await warehouse.product_log.rename(act["old"], act["new"])
             text = t["wh_rn_done"].format(new=escape(act["new"]), count=sum(changed.values()))
             data = await state.get_data()
             if data.get("ed_name") == act["old"]:                  # tahrirlash kartasidan kelingan
@@ -1107,15 +1122,15 @@ async def _show_unpriced(target: Message, t: Dict[str, str], state: FSMContext, 
         await target.answer(t["error"])
         return
     await state.clear()
+    await _reconcile_unpriced(warehouse, rows)
     if not rows:
         await _show(target, t["wh_unpriced_none"], None, edit)
         return
-    rows = rows[-20:]                                  # eng oxirgi 20 tasi
-    await state.update_data(unp=[{"row": r.row, "name": r.name, "unit": r.unit, "qty": r.qty,
-                                  "day": r.day.strftime("%d.%m.%Y") if r.day else "—",
-                                  "sup": r.supplier} for r in rows], view="unp")
-    labels = [f"{r.name} · {_n(r.qty)} {r.unit}" for r in rows]
-    await _show(target, t["wh_unpriced_title"].format(count=len(rows)), kb.unpriced_kb(t, labels), edit)
+    items = _unpriced_queue(warehouse, rows)
+    await state.update_data(unp=items, view="unp")
+    text = unpriced_list_text(t, items, warehouse.today())
+    labels = [f"{it['name']} · {_n(it['qty'])} {it['unit']}" for it in items[:20]]
+    await _show(target, text, kb.unpriced_kb(t, labels, len(items)), edit)
 
 
 @router.callback_query(WhCb.filter(F.a == "unp"))
@@ -1161,6 +1176,7 @@ async def _save_unpriced(target: Message, t: Dict[str, str], state: FSMContext, 
         logger.exception("Narxni jadvalga yozib bo'lmadi")
         await target.answer(t["wh_save_error"])
         return
+    await _resolve_unpriced(warehouse, r)
     await target.answer(t["wh_unpriced_saved"].format(name=escape(r["name"]), price=_n(price), qty=_n(r["qty"]),
                                                       total=_n(total)))
     await _show_unpriced(target, t, state, warehouse, edit=False)
@@ -1508,6 +1524,12 @@ async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContex
         await _show_cat_menu(msg, t, state, warehouse, edit=True)
     elif st == WhSt.unp_price.state:
         await _show_unpriced(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.seq_price.state:
+        i = int(data.get("seq_i", 0))
+        if i <= 0:
+            await _show_unpriced(msg, t, state, warehouse, edit=True)
+        else:
+            await _seq_show(msg, t, state, warehouse, i - 1, edit=True)
     else:
         await _show_categories(msg, t, state, warehouse, edit=True)
 
@@ -1525,9 +1547,12 @@ def _number_error(t: Dict[str, str], raw: str, value: Optional[float], field: st
     example = t[f"wh_ex_{field}"].format(unit=escape(unit) or "")
     if value is None:
         return t["wh_err_not_number"].format(raw=escape(str(raw)[:30]), example=example)
+    if field == "min_req" and value <= 0:
+        # har bir ombor tovarida kuzatuv chegarasi bo'lishi shart
+        return t["wh_err_min_required"].format(example=example)
     if value < 0 or (value == 0 and field != "min"):
         return t["wh_err_positive" if field != "min" else "wh_err_negative"].format(example=example)
-    limit = {"qty": 10**9, "price": 10**13, "pack": 10**6, "min": 10**9}[field]
+    limit = {"qty": 10**9, "price": 10**13, "pack": 10**6, "min": 10**9, "min_req": 10**9}[field]
     if value > limit:
         return t["wh_err_too_big"].format(example=example)
     return None
@@ -1738,7 +1763,7 @@ async def _edit_min(target: Message, t: Dict[str, str], state: FSMContext, wareh
 async def edit_min_text(message: Message, t: Dict[str, str], state: FSMContext,
                         warehouse: WarehouseService) -> None:
     value = parse_number(message.text)
-    error = _number_error(t, message.text, value, "min")
+    error = _number_error(t, message.text, value, "min_req")
     if error:
         sug = (await state.get_data()).get("norm_sug")
         await message.answer(error, reply_markup=kb.norm_kb(t, _n(sug) if sug else None, ""))
@@ -1749,8 +1774,11 @@ async def edit_min_text(message: Message, t: Dict[str, str], state: FSMContext,
 @router.callback_query(WhSt.ed_min, WhCb.filter(F.a.in_({"mns", "mn0"})))
 async def edit_min_button(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
                           warehouse: WarehouseService) -> None:
-    sug = (await state.get_data()).get("norm_sug") if callback_data.a == "mns" else 0.0
-    if sug is None:
+    if callback_data.a == "mn0":
+        await callback.answer(t["wh_min_required_alert"], show_alert=True)
+        return
+    sug = (await state.get_data()).get("norm_sug")
+    if not sug:
         await callback.answer(t["wh_expired"], show_alert=True)
         return
     await callback.answer("⏳")
@@ -1793,6 +1821,203 @@ async def _remember_norm(warehouse: WarehouseService, value: float, unit: str, c
         await store.remember(value, unit, category)
     except Exception:
         logger.exception("Normativni eslab qolib bo'lmadi")
+
+
+# ---------------- 💰 narxsiz kirimlar: nazorat jadvali (SQLite) bilan moslash ----------------
+def _unpriced_queue(warehouse: WarehouseService, rows: List[Any]) -> List[Dict[str, Any]]:
+    """O'tgan kunlardan qolganlar (eng eskisi) birinchi, keyin bugungilar."""
+    today = warehouse.today()
+    items = [{"row": r.row, "name": r.name, "unit": r.unit, "qty": r.qty, "iso": r.day.isoformat() if r.day else "",
+              "day": r.day.strftime("%d.%m.%Y") if r.day else "—", "sup": r.supplier,
+              "late": (today - r.day).days if r.day and r.day < today else 0} for r in rows]
+    return sorted(items, key=lambda it: (-it["late"], it["row"]))
+
+
+def unpriced_list_text(t: Dict[str, str], items: List[Dict[str, Any]], today, limit: int = 25) -> str:
+    """Bugungi va «📅 O'tgan kunlardan qolib ketganlar» (sana va necha kun o'tgani bilan) alohida."""
+    late = [it for it in items if it["late"] > 0]
+    fresh = [it for it in items if it["late"] == 0]
+    lines = [t["wh_unpriced_title2"].format(count=len(items))]
+    if fresh:
+        lines += ["", t["wh_unp_today"].format(n=len(fresh))]
+        lines += [f"• {escape(it['name'])} — {_n(it['qty'])} {escape(it['unit'])}" for it in fresh[:limit]]
+    if late:
+        lines += ["", t["wh_unp_late"].format(n=len(late))]
+        lines += [t["wh_unp_late_line"].format(name=escape(it["name"]), qty=_n(it["qty"]), unit=escape(it["unit"]),
+                                               date=it["day"], days=it["late"]) for it in late[:limit]]
+    lines += ["", t["wh_unp_hint"]]
+    return "\n".join(lines)
+
+
+async def _reconcile_unpriced(warehouse: WarehouseService, rows: List[Any]) -> None:
+    store = warehouse.unpriced_store
+    if store is None:
+        return
+    try:
+        today = warehouse.today().isoformat()
+        await store.reconcile([(r.row, r.name, r.qty, r.unit, r.day.isoformat() if r.day else today) for r in rows])
+    except Exception:
+        logger.exception("Narxsiz kirimlar jadvalini moslab bo'lmadi")
+
+
+async def _resolve_unpriced(warehouse: WarehouseService, it: Dict[str, Any]) -> None:
+    if warehouse.unpriced_store is None:
+        return
+    try:
+        await warehouse.unpriced_store.resolve(it["name"], it.get("iso") or warehouse.today().isoformat(), it["qty"])
+    except Exception:
+        logger.exception("Narxsiz kirimni hal bo'lgan deb belgilab bo'lmadi")
+
+
+async def _track_inflow(warehouse: WarehouseService, items: List[InflowItem], rows: List[int]) -> None:
+    """Kirim saqlangach: narxsiz qatorlar nazoratga olinadi; yangi mahsulotning birinchi kirimi yoziladi."""
+    today = warehouse.today().isoformat()
+    for it, row in zip(items, rows):
+        try:
+            if not it.price and warehouse.unpriced_store is not None:
+                await warehouse.unpriced_store.add(row, it.name, it.qty, it.unit, today)
+            if warehouse.product_log is not None:
+                await warehouse.product_log.note_first_inflow(it.name, it.qty, it.price)
+        except Exception:
+            logger.exception("Kirim nazorat yozuvlarini saqlab bo'lmadi")
+
+
+# ---------------- 💰 narxlarni birma-bir kiritish ----------------
+async def _seq_show(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                    i: int, edit: bool) -> None:
+    items = (await state.get_data()).get("unp") or []
+    if i >= len(items):
+        await state.clear()
+        try:
+            left = len(await warehouse.unpriced())
+        except Exception:
+            left = 0
+        await _show(target, t["wh_seq_done"] if not left else t["wh_seq_done_left"].format(n=left), None, edit)
+        return
+    it = items[i]
+    try:
+        last = await warehouse.last_price(it["name"])
+    except Exception:
+        last = None
+    await state.set_state(WhSt.seq_price)
+    await state.update_data(seq_i=i, unp_cur=it, unp_last=last)
+    late = t["wh_seq_late"].format(days=it["late"]) if it.get("late") else ""
+    text = t["wh_seq_prompt"].format(i=i + 1, n=len(items), name=escape(it["name"]), qty=_n(it["qty"]),
+                                     unit=escape(it["unit"]), date=it["day"], late=late)
+    await _show(target, text, kb.seq_kb(t, _n(last) if last else None), edit)
+
+
+@router.callback_query(WhCb.filter(F.a == "seq"))
+async def seq_start(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                    warehouse: WarehouseService) -> None:
+    data = await state.get_data()
+    if not data.get("unp"):                                  # eslatma xabaridan bosilgan: ro'yxat yangidan
+        try:
+            rows = await warehouse.unpriced()
+        except Exception:
+            logger.exception("Narxi yo'q tovarlarni o'qib bo'lmadi")
+            await callback.answer(t["error"], show_alert=True)
+            return
+        await _reconcile_unpriced(warehouse, rows)
+        if not rows:
+            await callback.answer(t["wh_unpriced_none"], show_alert=True)
+            return
+        await state.clear()
+        await state.update_data(unp=_unpriced_queue(warehouse, rows))
+    await callback.answer()
+    await _seq_show(callback.message, t, state, warehouse, 0, edit=True)
+
+
+async def _seq_save(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                    price: float) -> None:
+    data = await state.get_data()
+    it, i = data.get("unp_cur"), int(data.get("seq_i", 0))
+    if not it:
+        await target.answer(t["wh_expired"])
+        return
+    try:
+        total = await warehouse.set_price(it["row"], it["name"], price)
+    except NotFoundError:
+        await target.answer(t["wh_unpriced_moved"])
+        await _seq_show(target, t, state, warehouse, i + 1, edit=False)
+        return
+    except Exception:
+        logger.exception("Narxni jadvalga yozib bo'lmadi")
+        await target.answer(t["wh_save_error"])
+        return
+    await _resolve_unpriced(warehouse, it)
+    await target.answer(t["wh_unpriced_saved"].format(name=escape(it["name"]), price=_n(price), qty=_n(it["qty"]),
+                                                      total=_n(total)))
+    await _seq_show(target, t, state, warehouse, i + 1, edit=False)
+
+
+@router.message(WhSt.seq_price, F.text)
+async def seq_price_text(message: Message, t: Dict[str, str], state: FSMContext,
+                         warehouse: WarehouseService) -> None:
+    value = parse_number(message.text)
+    error = _number_error(t, message.text, value, "price")
+    if error:
+        last = (await state.get_data()).get("unp_last")
+        await message.answer(error, reply_markup=kb.seq_kb(t, _n(last) if last else None))
+        return
+    await _seq_save(message, t, state, warehouse, value)
+
+
+@router.callback_query(WhSt.seq_price, WhCb.filter(F.a == "sqlp"))
+async def seq_last_price(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                         warehouse: WarehouseService) -> None:
+    last = (await state.get_data()).get("unp_last")
+    if not last:
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer("⏳")
+    await _seq_save(callback.message, t, state, warehouse, float(last))
+
+
+@router.callback_query(WhSt.seq_price, WhCb.filter(F.a == "sqs"))
+async def seq_skip(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                   warehouse: WarehouseService) -> None:
+    await callback.answer()
+    await _seq_show(callback.message, t, state, warehouse, int((await state.get_data()).get("seq_i", 0)) + 1,
+                    edit=True)
+
+
+# ---------------- 🔎 erkin matn bilan topilgan mahsulot: tezkor tugmalar ----------------
+@router.callback_query(WhCb.filter(F.a == "lk"))
+async def lookup_action(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], user: User,
+                        state: FSMContext, store: UserStore, warehouse: WarehouseService) -> None:
+    names = (await state.get_data()).get("lookup") or []
+    if callback_data.i >= len(names):
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    try:
+        product = await warehouse.product(names[callback_data.i], force=True)
+    except Exception:
+        product = None
+    if product is None:
+        await callback.answer(t["wh_not_in_catalog"], show_alert=True)
+        return
+    await callback.answer()
+    await state.clear()
+    store.clear_awaiting(user.id)
+    if callback_data.k == "ed":
+        await _show_edit_card(callback.message, t, state, warehouse, product.name, edit=False)
+        return
+    await state.update_data(flow=FLOW_OUT if callback_data.k == "out" else FLOW_IN, cart=[])
+    await _start_item(callback.message, t, state, product, edit=False)
+
+
+@router.callback_query(WhCb.filter(F.a == "lkadd"))
+async def lookup_add(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                     warehouse: WarehouseService) -> None:
+    query = (await state.get_data()).get("lookup_q")
+    if not query:
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer()
+    await state.clear()
+    await state.update_data(np={"ret": None}, cart=[])
+    await _np_set_name(callback.message, t, state, warehouse, query, edit=False)
 
 
 # ---------------- eskirgan tugmalar ----------------

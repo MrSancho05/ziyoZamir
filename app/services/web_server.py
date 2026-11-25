@@ -6,8 +6,8 @@ Marshrutlar:
     GET /healthz              -> "ok"
 
 Xavfsizlik: /api/dashboard faqat Telegram imzolagan `initData` bilan ishlaydi (X-Telegram-Init-Data sarlavhasi,
-bot tokeni bilan HMAC-SHA256 tekshiriladi) va faqat bazadagi faol BOSS, ADMIN yoki SKLAD NAZORATCHISI uchun. Sahifaning o'zida
-hech qanday maxfiy ma'lumot yo'q. (Sklad nazoratchisi ham ko'radi.)
+bot tokeni bilan HMAC-SHA256 tekshiriladi) va faqat bazadagi faol BOSS yoki ADMIN uchun. Sahifaning o'zida
+hech qanday maxfiy ma'lumot yo'q.
 
 Tezlik / kvota: har bir (davr, mavsum, siljish) uchun xom ma'lumot TTL keshda saqlanadi (standart 60 s) va bir
 vaqtdagi bir xil so'rovlar bitta o'qishga birlashtiriladi. Til faqat yorliqlarni o'zgartiradi, ma'lumot qayta
@@ -34,6 +34,7 @@ from app.core.permissions import Role
 from app.locales.texts import get_texts, month_name, weekday_short
 from app.services.categories import label as cat_label
 from app.services.inspect_reports import period_label
+from app.services.other_expenses import category_label as other_label
 from app.utils.periods import SEASONS, TIMEFRAMES, TF_SEASONAL, TF_YEARLY, WINTER, Range, shifted_range
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ HTML_PATH = Path(__file__).resolve().parent.parent / "webapp" / "dashboard.html"
 CACHE_TTL = 60.0
 INIT_DATA_MAX_AGE = 24 * 3600
 MAX_BACK = 60                       # orqaga eng ko'p 60 davr
-ALLOWED_ROLES = (Role.BOSS, Role.ADMIN, Role.STOREKEEPER)
+ALLOWED_ROLES = (Role.BOSS, Role.ADMIN)
 
 
 # ---------------- Telegram initData tekshiruvi ----------------
@@ -89,6 +90,8 @@ class RawData:
     units: Dict[str, str] = field(default_factory=dict)
     cats: Dict[str, str] = field(default_factory=dict)          # tovar (casefold) -> kategoriya
     att: Optional[Dict[str, int]] = None
+    other_rows: List[Tuple[date, str, float]] = field(default_factory=list)    # 🧾 (kun, kategoriya, summa)
+    other_prev: Optional[float] = None
     errors: List[str] = field(default_factory=list)
     built_at: float = 0.0
 
@@ -179,6 +182,16 @@ class DashboardService:
         except Exception:
             logger.exception("Dashboard: davomatni o'qib bo'lmadi")
             d.errors.append("att")
+
+        other = getattr(self._wh, "other", None)              # 🧾 Boshqa xarajatlar («Прочие расходы»)
+        if other is not None:
+            try:
+                cur = await other.summary(rng.start, rng.end)
+                d.other_rows = [(r.day, r.category, r.amount) for r in cur.rows]
+                d.other_prev = (await other.summary(rng.prev_start, rng.prev_end)).total
+            except Exception:
+                logger.exception("Dashboard: boshqa xarajatlarni o'qib bo'lmadi")
+                d.errors.append("other")
         return d
 
     # ---------------- JSON (tilga qarab yorliqlar) ----------------
@@ -195,13 +208,17 @@ class DashboardService:
         while day <= rng.end:
             k = (day.year, day.month) if by_month else day
             if k not in buckets:
-                buckets[k] = [0.0, 0.0]
+                buckets[k] = [0.0, 0.0, 0.0]
                 order.append(k)
             day += timedelta(days=1)
         for day, amount in d.shop_days.items():
             k = (day.year, day.month) if by_month else day
             if k in buckets:
                 buckets[k][0] += amount
+        for day, _cat, amount in d.other_rows:
+            k = (day.year, day.month) if by_month else day
+            if k in buckets:
+                buckets[k][2] += amount
         for day, _name, _q, v in d.out_rows:
             k = (day.year, day.month) if by_month else day
             if k in buckets:
@@ -232,6 +249,11 @@ class DashboardService:
             return round((cur - prev) * 100 / prev, 1)
 
         top = sorted(items.items(), key=lambda kv: (-kv[1][1], -kv[1][0]))[:7]
+        other_cats: Dict[str, float] = {}
+        for _day, cat, amount in d.other_rows:
+            other_cats[cat or "—"] = other_cats.get(cat or "—", 0.0) + amount
+        other_total = sum(a for *_x, a in d.other_rows) if "other" not in d.errors and getattr(
+            self._wh, "other", None) is not None else None
         return {
             "ok": True,
             "tf": rng.tf, "season": rng.season if rng.season is not None else WINTER, "offset": offset,
@@ -245,16 +267,22 @@ class DashboardService:
                 "consumption": {"value": round(consumption), "prev": round(d.out_prev),
                                 "delta": delta(consumption, d.out_prev)},
                 "inflow": round(d.in_total),
+                "other": {"value": round(other_total) if other_total is not None else None,
+                          "prev": round(d.other_prev) if d.other_prev is not None else None,
+                          "delta": delta(other_total, d.other_prev), "count": len(d.other_rows)},
                 "attendance": d.att,
             },
             "series": {"labels": labels, "shop": [round(b[0]) for b in (buckets[k] for k in order)],
-                       "outflow": [round(b[1]) for b in (buckets[k] for k in order)]},
+                       "outflow": [round(b[1]) for b in (buckets[k] for k in order)],
+                       "other": [round(b[2]) for b in (buckets[k] for k in order)]},
             "categories": [{"name": k, "value": round(v)} for k, v in sorted(cats.items(), key=lambda kv: -kv[1])
                            if v > 0],
             "top": [{"name": names[k], "qty": _n(q), "unit": d.units.get(k, ""), "value": round(v)}
                     for k, (q, v) in top],
             "low": d.low[:30],
             "low_count": len(d.low),
+            "other_categories": [{"name": other_label(c, lang), "value": round(v)} for c, v in
+                                 sorted(other_cats.items(), key=lambda kv: -kv[1]) if v > 0],
             "errors": d.errors,
             "generated_at": datetime.now(self._tz).strftime("%H:%M"),
         }

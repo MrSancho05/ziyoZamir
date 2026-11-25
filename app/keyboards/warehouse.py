@@ -7,7 +7,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.callbacks import WhCb
-from app.keyboards.webapp import dashboard_rows
 
 MAX_LABEL = 30
 
@@ -166,8 +165,30 @@ def dir_pick_kb(t: Dict[str, str], kind: str, values: Sequence[str]) -> InlineKe
 
 
 # ---------- 💰 Narxi yo'q tovarlar ----------
-def unpriced_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
-    return grid([_b(f"💰 {_short(n, 26)}", "up", i) for i, n in enumerate(labels)], [cancel_row(t, back=False)])
+def unpriced_kb(t: Dict[str, str], labels: Sequence[str], total: int = 0) -> InlineKeyboardMarkup:
+    """[💰 Narxlarni birma-bir kiritish (N ta)] + har bir tovar tugmasi."""
+    nav = [[_b(t["wh_btn_seq"].format(n=total or len(labels)), "seq")]] if (total or labels) else []
+    return grid([], nav + [[_b(f"💰 {_short(n, 30)}", "up", i)] for i, n in enumerate(labels)]
+                + [cancel_row(t, back=False)])
+
+
+def seq_kb(t: Dict[str, str], last_price: Optional[str]) -> InlineKeyboardMarkup:
+    buttons = [_b(t["wh_btn_last_price"].format(price=last_price), "sqlp")] if last_price else []
+    buttons.append(_b(t["wh_btn_skip_item"], "sqs"))
+    return grid(buttons, [cancel_row(t)], cols=1)
+
+
+def lookup_kb(t: Dict[str, str], names: Sequence[str]) -> InlineKeyboardMarkup:
+    """Erkin matn bilan topilgan mahsulotlar: har biriga 📥 Kirim | 📤 Chiqim | ✏️ Tahrirlash."""
+    rows: List[List[InlineKeyboardButton]] = []
+    for i, n in enumerate(names):
+        rows.append([_b(f"📥 {_short(n, 14)}", "lk", i, k="in"), _b("📤", "lk", i, k="out"),
+                     _b("✏️", "lk", i, k="ed")])
+    return grid([], rows)
+
+
+def lookup_add_kb(t: Dict[str, str], query: str) -> InlineKeyboardMarkup:
+    return grid([], [[_b(t["wh_btn_add_query"].format(query=_short(query, 22)), "lkadd")]])
 
 
 def unpriced_price_kb(t: Dict[str, str], last_price: Optional[str]) -> InlineKeyboardMarkup:
@@ -179,7 +200,7 @@ def flows_reminder_kb(t: Dict[str, str], unpriced: int) -> InlineKeyboardMarkup:
     """17:30 eslatmasidagi tezkor tugmalar."""
     buttons = [_b(t["flows_btn_in"], "go", k="in"), _b(t["flows_btn_out"], "go", k="out")]
     nav = [[_b(t["wh_btn_unpriced"].format(count=unpriced), "unp")]] if unpriced else []
-    return grid(buttons, nav + dashboard_rows(t))
+    return grid(buttons, nav)               # sklad xodimlariga boradi: 📊 Dashboard tugmasi yo'q
 
 
 def np_unit_kb(t: Dict[str, str], units: Sequence[str]) -> InlineKeyboardMarkup:
@@ -230,7 +251,7 @@ def pick_kb(t: Dict[str, str], labels: Sequence[str], action: str, current: str 
 def norm_kb(t: Dict[str, str], suggestion: Optional[str], unit: str) -> InlineKeyboardMarkup:
     """Мин. норматив: [💡 Tavsiya: N unit (oxirgi kiritilgan)] [0 (kuzatilmasin)] + qo'lda yozish."""
     buttons = [_b(t["wh_btn_norm_suggest"].format(norm=suggestion, unit=unit), "mns")] if suggestion else []
-    buttons.append(_b(t["wh_btn_norm_zero"], "mn0"))
+    # "0 (kuzatilmasin)" yo'q: har bir ombor tovarida Мин. норматив majburiy (> 0)
     return grid(buttons, [cancel_row(t)], cols=1)
 
 
@@ -243,3 +264,8 @@ def zero_stock_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
 def over_stock_kb(t: Dict[str, str], avail: str, unit: str) -> InlineKeyboardMarkup:
     return grid([], [[_b(t["wh_btn_take_all"].format(avail=avail, unit=unit), "qall")],
                      [_b(t["wh_btn_other_qty"], "qre")], cancel_row(t)])
+
+
+def unpriced_reminder_kb(t: Dict[str, str], n: int) -> InlineKeyboardMarkup:
+    """Narxsiz kirim eslatmasi: 1 bosishda birma-bir narx kiritish."""
+    return grid([], [[_b(t["wh_btn_seq"].format(n=n), "seq")], [_b(t["wh_btn_unp_list"], "unp")]])

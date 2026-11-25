@@ -244,6 +244,9 @@ class WarehouseService:
         self._directory_ts = 0.0
         self.cat_store = None          # storage.categories.CategoryStore (main.py da beriladi)
         self.norm_store = None         # storage.norms.NormMemory: oxirgi kiritilgan Мин. остаток (main.py)
+        self.product_log = None        # storage.tracking.ProductLog: 🆕 yangi qo'shilgan mahsulotlar
+        self.unpriced_store = None     # storage.tracking.UnpricedStore: narxsiz kirimlar nazorati
+        self.other = None              # services.other_expenses.OtherExpensesService: 🧾 Boshqa xarajatlar
 
     # ---------- umumiy ----------
     def _ws(self, title: str):
@@ -885,6 +888,23 @@ class WarehouseService:
         """Ombordagi jami qoldiq qiymati (Сумма остатка, bo'lmasa qoldiq × o'rtacha narx).
         fresh=False: 60 soniyalik katalog keshidan (Dashboard)."""
         return sum(p.value or p.stock * p.avg_price for p in await self.catalog(force=fresh))
+
+    async def category_values(self, out_rows: Sequence[Any]) -> Dict[str, Tuple[float, float]]:
+        """Kategoriya -> (ombordagi qoldiq qiymati, davrdagi sarf qiymati).
+        `out_rows`: flows_store dagi Расход yozuvlari (label, qty, amount). Сумма расхода bo'lmasa —
+        miqdor × o'rtacha narx."""
+        catalog = await self.catalog()
+        by_name = {_key(p.name): p for p in catalog}
+        out: Dict[str, List[float]] = {}
+        for p in catalog:
+            agg = out.setdefault(p.category or "", [0.0, 0.0])
+            agg[0] += p.value or p.stock * p.avg_price
+        for r in out_rows:
+            p = by_name.get(_key(getattr(r, "label", "")))
+            value = float(getattr(r, "amount", 0) or 0) or float(getattr(r, "qty", 0) or 0) * (p.avg_price if p else 0.0)
+            agg = out.setdefault(p.category if p and p.category else "", [0.0, 0.0])
+            agg[1] += value
+        return {k: (v[0], v[1]) for k, v in sorted(out.items(), key=lambda kv: -kv[1][0])}
 
     async def low_items(self) -> List[Product]:
         return [p for p in await self.catalog() if p.is_low]

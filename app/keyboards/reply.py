@@ -12,6 +12,7 @@ _MENU = (
     (Permission.MANAGE_WAREHOUSE, "btn_inflow"),
     (Permission.MANAGE_WAREHOUSE, "btn_outflow"),
     (Permission.MANAGE_WAREHOUSE, "btn_products"),
+    (Permission.MANAGE_WAREHOUSE, "btn_other_exp"),   # 🧾 Boshqa xarajatlar
     (Permission.VIEW_DEFICIT, "btn_deficit"),
     (Permission.MARK_ATTENDANCE, "btn_attendance"),
     (Permission.MARK_EXPENSES, "btn_shop"),

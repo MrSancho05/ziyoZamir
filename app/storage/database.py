@@ -79,6 +79,37 @@ CREATE TABLE IF NOT EXISTS categories (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS new_products (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  INTEGER NOT NULL,            -- unix vaqt
+    day         TEXT NOT NULL,               -- YYYY-MM-DD (Asia/Tashkent)
+    user_id     INTEGER,
+    user_name   TEXT,
+    name        TEXT NOT NULL,
+    category    TEXT,
+    unit        TEXT,
+    min_stock   REAL,
+    first_qty   REAL,                        -- birinchi kirim (bo'lsa)
+    first_price REAL
+);
+
+CREATE TABLE IF NOT EXISTS unpriced_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    sheet_row       INTEGER,
+    product_name    TEXT NOT NULL,
+    qty             REAL,
+    unit            TEXT,
+    entry_date      TEXT NOT NULL,           -- Приход dagi sana (YYYY-MM-DD)
+    created_at      INTEGER NOT NULL,        -- bot birinchi marta ko'rgan vaqt
+    first_reminded  INTEGER,
+    second_reminded INTEGER,
+    escalated_at    INTEGER,                 -- 12:00 dan keyin Boss nazoratiga o'tgan vaqt
+    reminder_count  INTEGER NOT NULL DEFAULT 0,
+    resolved        INTEGER NOT NULL DEFAULT 0,
+    resolved_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_unpriced_open ON unpriced_items (resolved, entry_date);
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

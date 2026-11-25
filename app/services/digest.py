@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from html import escape
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.locales.texts import month_name, weekday_short
 from app.services.attendance_grid import PeriodStats
@@ -45,6 +45,12 @@ class DigestData:
     low: List[Product] = field(default_factory=list)
     att: Optional[PeriodStats] = None
     errors: List[str] = field(default_factory=list)   # o'qib bo'lmagan bo'limlar: shop | wh | att
+    # qo'shimcha bo'limlar (jobs._collect_extras)
+    other: Any = None                                  # OtherSummary: 🧾 Boshqa xarajatlar
+    other_prev: Any = None
+    new_products: List[Any] = field(default_factory=list)          # 🆕 NewProduct
+    cat_values: Dict[str, Tuple[float, float]] = field(default_factory=dict)   # kategoriya -> (qiymat, sarf)
+    unpriced_ctl: List[Any] = field(default_factory=list)          # ⚠️ UnpricedItem (12:00 muddati o'tgan)
 
 
 def _cmp(t: Dict[str, str], kind: str, cur: int, prev: Optional[int]) -> str:
@@ -109,6 +115,9 @@ def _brief(t: Dict[str, str], lang: str, d: DigestData) -> str:
         came, excused, absent, total, rate = _att_totals(d.att)
         lines.append(t["dg_att_head"].format(icon="✅" if rate >= 90 else "⚠️", rate=rate))
         lines.append(t["dg_att_abs"].format(n=absent) if absent else t["dg_att_abs_none"])
+    extra = _extra_brief(t, d, period=True)
+    if extra:
+        lines += [""] + extra
     lines += ["", t["dg_hint"]]
     return "\n".join(lines)
 
@@ -116,7 +125,7 @@ def _brief(t: Dict[str, str], lang: str, d: DigestData) -> str:
 def _shop_detail(t: Dict[str, str], lang: str, d: DigestData) -> str:
     lines = _title(t, lang, d) + ["", t["dg_shop_title"], ""]
     if "shop" in d.errors or d.shop is None:
-        return "\n".join(lines + [t["dg_section_error"]])
+        return "\n".join(lines + [t["dg_section_error"]] + _other_block(t, d))
     cur = d.shop
     n = len(cur.per_day)
     lines.append(t["dg_shop_total"].format(total=fmt_money(cur.total)))
@@ -138,6 +147,7 @@ def _shop_detail(t: Dict[str, str], lang: str, d: DigestData) -> str:
     if cur.missing:
         shown = ", ".join(x.strftime("%d.%m") for x in cur.missing[:15]) + (" …" if len(cur.missing) > 15 else "")
         lines += ["", t["rep_shop_missing"].format(n=len(cur.missing), days=shown)]
+    lines += _other_block(t, d)
     return fit_message("\n".join(lines), t["an_truncated"])
 
 
@@ -163,6 +173,8 @@ def _wh_detail(t: Dict[str, str], lang: str, d: DigestData) -> str:
             lines.append(f"… +{len(d.low) - 20}")
     else:
         lines.append(t["dg_wh_low_ok"].strip())
+    lines += _cat_block(t, d.cat_values, period=True) + _new_block(t, d.new_products) + \
+        _unpriced_block(t, d.unpriced_ctl, d.end)
     return fit_message("\n".join(lines).strip(), t["an_truncated"])
 
 
@@ -246,6 +258,12 @@ class ExecDay:
     low: List[Product] = field(default_factory=list)
     stock_value: Optional[float] = None
     errors: List[str] = field(default_factory=list)
+    # qo'shimcha bo'limlar (jobs._collect_extras)
+    other: Any = None                                  # OtherSummary: 🧾 Boshqa xarajatlar
+    other_prev: Any = None
+    new_products: List[Any] = field(default_factory=list)          # 🆕 NewProduct
+    cat_values: Dict[str, Tuple[float, float]] = field(default_factory=dict)   # kategoriya -> (qiymat, sarf)
+    unpriced_ctl: List[Any] = field(default_factory=list)          # ⚠️ UnpricedItem (12:00 muddati o'tgan)
 
 
 def _flow_totals(d: ExecDay, key: str) -> tuple:
@@ -304,6 +322,9 @@ def render_exec_summary(t: Dict[str, str], lang: str, d: ExecDay) -> Dict[str, s
     if d.low:
         extra.append(t["es_low"].format(n=len(d.low)))
 
+    extra += _extra_brief(t, d, period=False)
+    if d.unpriced_ctl:
+        issues += 1
     verdict = t["es_all_ok"] if issues == 0 else t["es_issues"].format(n=issues)
     brief = "\n".join(head + [shop_line, att_line, wh_line] + extra + ["", verdict])
 
@@ -340,5 +361,115 @@ def render_exec_summary(t: Dict[str, str], lang: str, d: ExecDay) -> Dict[str, s
                                              min=_qty(p.min_stock)) for p in d.low[:10]]
         if len(d.low) > 10:
             lines.append(f"… +{len(d.low) - 10}")
+    lines += _other_block(t, d) + _cat_block(t, d.cat_values, period=False) + _new_block(t, d.new_products) + \
+        _unpriced_block(t, d.unpriced_ctl, d.day)
     lines += ["", verdict]
     return {"brief": brief, "detail": fit_message("\n".join(lines), t["an_truncated"])}
+
+
+
+# ---------------- qo'shimcha bo'limlar: 🧾 / 📦 kategoriya / 🆕 / ⚠️ ----------------
+def _extra_brief(t: Dict[str, str], d: Any, period: bool) -> List[str]:
+    lines = []
+    if d.other is not None:
+        cmp = ""
+        if period and d.other_prev is not None and d.other_prev.total:
+            pct = int(round((d.other.total - d.other_prev.total) * 100 / d.other_prev.total))
+            cmp = f" ({'+' if pct > 0 else ''}{pct}%)"
+        lines.append(t["dg_other_line"].format(total=_money(d.other.total), n=d.other.count, cmp=cmp))
+    if d.cat_values and not period:
+        lines.append(t["dg_stock_line"].format(value=_money(sum(v for v, _s in d.cat_values.values()))))
+    if d.new_products:
+        lines.append(t["dg_new_line"].format(n=len(d.new_products)))
+    if d.unpriced_ctl:
+        ignored = sum(it.reminder_count for it in d.unpriced_ctl)
+        lines.append(t["dg_unp_line"].format(n=len(d.unpriced_ctl), r=ignored))
+    return lines
+
+
+def _other_block(t: Dict[str, str], d: Any) -> List[str]:
+    if d.other is None:
+        return []
+    from app.services.other_expenses import category_label
+    lang = t.get("lang_code", "uz")
+    lines = ["", t["dg_other_title"], t["dg_other_total"].format(total=_money(d.other.total), n=d.other.count)]
+    lines += [f"• {escape(category_label(c, lang), quote=False)} — {_money(v)} " + t["es_cur"]
+              for c, v in d.other.by_category.items()]
+    for r in d.other.rows[-8:]:
+        lines.append(f"   ◦ {r.day.strftime('%d.%m')} · {escape(r.description)} — {_money(r.amount)} · {escape(r.who)}")
+    return lines
+
+
+def _cat_block(t: Dict[str, str], cats: Dict[str, Tuple[float, float]], period: bool) -> List[str]:
+    if not cats or not any(v or sp for v, sp in cats.values()):      # hammasi 0 — bo'lim ko'rsatilmaydi
+        return []
+    from app.services.categories import label as cat_label
+    lang = t.get("lang_code", "uz")
+    total = sum(v for v, _s in cats.values())
+    lines = ["", t["dg_cat_title"].format(total=_money(total))]
+    key = "dg_cat_line_period" if period else "dg_cat_line_day"
+    for cat, (value, spend) in cats.items():
+        if value or spend:
+            lines.append(t[key].format(cat=escape(cat_label(cat, lang) if cat else t["dg_cat_none"]),
+                                       value=_money(value), spend=_money(spend)))
+    return lines
+
+
+def _new_block(t: Dict[str, str], items: Sequence[Any]) -> List[str]:
+    if not items:
+        return []
+    from app.services.categories import label as cat_label
+    lang = t.get("lang_code", "uz")
+    lines = ["", t["dg_new_title"].format(n=len(items))]
+    for p in items[:20]:
+        if not p.first_qty:
+            first = t["dg_new_nofirst"]
+        elif p.first_price:
+            first = t["dg_new_first"].format(qty=_qty(p.first_qty), unit=escape(p.unit), price=_money(p.first_price))
+        else:
+            first = t["dg_new_first_noprice"].format(qty=_qty(p.first_qty), unit=escape(p.unit))
+        lines.append(t["dg_new_item"].format(name=escape(p.name), cat=escape(cat_label(p.category, lang) or "—"),
+                                             unit=escape(p.unit), min=_qty(p.min_stock), who=escape(p.user_name or "—"),
+                                             day=p.day[8:10] + "." + p.day[5:7], first=first))
+    if len(items) > 20:
+        lines.append(f"… +{len(items) - 20}")
+    return lines
+
+
+def _unpriced_block(t: Dict[str, str], items: Sequence[Any], today: date) -> List[str]:
+    if not items:
+        return []
+    lines = ["", t["dg_unp_title"]]
+    for it in items[:20]:
+        lines.append(t["dg_unp_item"].format(name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
+                                             date=it.entry_date[8:10] + "." + it.entry_date[5:7],
+                                             days=it.days_open(today), r=it.reminder_count))
+    if len(items) > 20:
+        lines.append(f"… +{len(items) - 20}")
+    return lines
+
+
+# ---------------- 💰 narxsiz kirimlar: sklad eslatmalari va Boss nazorati ----------------
+def unpriced_reminder_text(t: Dict[str, str], items: Sequence[Any], today: date, strict: bool, deadline) -> str:
+    """Bugungilar va «📅 O'tgan kunlardan qolib ketganlar» (sana, necha kun) alohida."""
+    iso = today.isoformat()
+    fresh = [it for it in items if it.entry_date >= iso]
+    late = [it for it in items if it.entry_date < iso]
+    head = t["unp_warn_head"].format(deadline=deadline.strftime("%H:%M")) if strict else t["unp_first_head"]
+    lines = [head, ""]
+    if fresh:
+        lines.append(t["wh_unp_today"].format(n=len(fresh)))
+        lines += [f"• {escape(it.product_name)} — {_qty(it.qty)} {escape(it.unit)}" for it in fresh[:15]]
+    if late:
+        if fresh:
+            lines.append("")
+        lines.append(t["wh_unp_late"].format(n=len(late)))
+        lines += [t["wh_unp_late_line"].format(name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
+                                               date=it.entry_date[8:10] + "." + it.entry_date[5:7] + "." + it.entry_date[:4],
+                                               days=it.days_open(today)) for it in late[:15]]
+    lines += ["", t["unp_tail"]]
+    return "\n".join(lines)
+
+
+def unpriced_boss_text(t: Dict[str, str], items: Sequence[Any], today: date) -> str:
+    return "\n".join([t["unp_boss_head"].format(n=len(items))] + _unpriced_block(t, items, today)[1:])

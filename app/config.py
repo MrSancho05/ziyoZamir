@@ -39,6 +39,10 @@ class Settings:
     flows_reminder_at: time
     digest_at: time
     summary_at: time
+    unpriced_first_minutes: int
+    unpriced_warn_at: time
+    unpriced_deadline_at: time
+    other_expenses_tab: str
     webapp_url: str = ""
     webapp_host: str = "0.0.0.0"
     webapp_port: int = 8080
@@ -114,6 +118,12 @@ def load_settings() -> Settings:
         digest_at=_parse_hm("DIGEST_TIME", "20:30"),
         # Dushanba–shanba: Boss va Adminga kunlik ijroiya xulosasi
         summary_at=_parse_hm("SUMMARY_TIME", "20:00"),
+        # Narxsiz kirim: 1-eslatma (daqiqa), 11:00 qat'iy ogohlantirish, 12:00 — Boss nazoratiga
+        unpriced_first_minutes=int(os.getenv("UNPRICED_FIRST_REMINDER_MINUTES", "60")),
+        unpriced_warn_at=_parse_hm("UNPRICED_DEADLINE_WARN_TIME", "11:00"),
+        unpriced_deadline_at=_parse_hm("UNPRICED_DEADLINE_TIME", "12:00"),
+        # 🧾 Boshqa xarajatlar varag'i (bot o'zi yaratadi)
+        other_expenses_tab=os.getenv("OTHER_EXPENSES_TAB", "Прочие расходы"),
         # 📊 Jonli Dashboard (Telegram Mini App). Tugma faqat HTTPS manzil berilganda chiqadi
         webapp_url=os.getenv("WEBAPP_URL", "").strip(),
         webapp_host=os.getenv("WEBAPP_HOST", "0.0.0.0").strip() or "0.0.0.0",

@@ -90,6 +90,7 @@
   .kpi::after { content: ""; position: absolute; width: 120px; height: 120px; right: -40px; top: -50px; border-radius: 50%;
     background: radial-gradient(circle, var(--glow, rgba(109,139,255,.35)), transparent 70%); }
   .kpi .k-ico { font-size: 18px; }
+  .kpi.wide { grid-column: 1 / -1; min-height: 96px; }
   .kpi .k-name { color: var(--muted); font-size: 12px; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: .4px; }
   .kpi .k-val { font-size: 22px; font-weight: 800; letter-spacing: -.5px; margin-top: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .kpi .k-val small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
@@ -186,6 +187,11 @@
     <div class="chart" id="c-trend"></div>
   </div>
 
+  <div class="card glass rise" style="animation-delay:.40s">
+    <h2><span id="t-other">Boshqa xarajatlar</span><span class="hint" id="other-hint"></span></h2>
+    <div class="chart sm" id="c-other"></div>
+  </div>
+
   <div class="card glass rise" style="animation-delay:.42s">
     <h2><span id="t-cats">Kategoriya bo'yicha sarf</span></h2>
     <div class="chart sm" id="c-donut"></div>
@@ -224,6 +230,7 @@
       shop: "Do'kon xarajati", stock: "Ombor qiymati", cons: "Material sarfi", att: "Davomat",
       cur: "so'm", vsPrev: "oldingi davrga", noPrev: "taqqoslash yo'q", inflow: "Kirim",
       trend: "Xarajat va sarf dinamikasi", lgShop: "Do'kon", lgOut: "Material sarfi",
+      other: "Boshqa xarajatlar", otherTitle: "🧾 Boshqa xarajatlar (ombordan tashqari)",
       cats: "Kategoriya bo'yicha sarf", total: "Jami", attTitle: "Zavod davomati",
       came: "keldi", absent: "sababsiz", excused: "sababli", noAtt: "Bu davrda yo'qlama olinmagan",
       top: "Eng ko'p sarflangan", def: "Tanqis tovarlar", stockLbl: "Qoldiq", norm: "Normativ",
@@ -237,6 +244,7 @@
       shop: "Расход магазина", stock: "Стоимость склада", cons: "Расход материалов", att: "Посещаемость",
       cur: "сум", vsPrev: "к прошлому периоду", noPrev: "нет сравнения", inflow: "Приход",
       trend: "Динамика расходов", lgShop: "Магазин", lgOut: "Материалы",
+      other: "Прочие расходы", otherTitle: "🧾 Прочие расходы (вне склада)",
       cats: "Расход по категориям", total: "Итого", attTitle: "Посещаемость завода",
       came: "пришли", absent: "без причины", excused: "по причине", noAtt: "За период посещаемость не отмечалась",
       top: "Больше всего расходуется", def: "Дефицит товаров", stockLbl: "Остаток", norm: "Норматив",
@@ -315,7 +323,7 @@
   $("t-title").textContent = L.title; document.title = L.title; $("t-sub").textContent = L.sub;
   $("t-prev").textContent = L.prev; $("t-next").textContent = L.next;
   $("t-trend").textContent = L.trend; $("t-lg-shop").textContent = L.lgShop; $("t-lg-out").textContent = L.lgOut;
-  $("t-cats").textContent = L.cats; $("t-att").textContent = L.attTitle; $("t-top").textContent = L.top; $("t-def").textContent = L.def;
+  $("t-cats").textContent = L.cats; $("t-other").textContent = L.otherTitle; $("t-att").textContent = L.attTitle; $("t-top").textContent = L.top; $("t-def").textContent = L.def;
 
   const tabs = $("tabs"), pill = $("pill"), seasonsEl = $("seasons");
   L.tabs.forEach((name, i) => {
@@ -353,9 +361,10 @@
     { id: "stock", ico: "📦", name: L.stock, glow: "rgba(34,211,238,.35)" },
     { id: "cons", ico: "🔧", name: L.cons, glow: "rgba(219,39,119,.30)" },
     { id: "att", ico: "👥", name: L.att, glow: "rgba(52,211,153,.35)" },
+    { id: "other", ico: "🧾", name: L.other, glow: "rgba(251,191,36,.35)", wide: true },
   ];
   $("kpis").innerHTML = KPI.map((k, i) => `
-    <div class="kpi glass rise" style="--glow:${k.glow};animation-delay:${.15 + i * .06}s">
+    <div class="kpi glass rise${k.wide ? " wide" : ""}" style="--glow:${k.glow};animation-delay:${.15 + i * .06}s">
       <div class="k-ico">${k.ico}</div><div class="k-name">${esc(k.name)}</div>
       <div class="k-val" id="kv-${k.id}">—</div><div class="chip" id="kc-${k.id}">…</div>
     </div>`).join("");
@@ -380,6 +389,9 @@
     const ac = $("kc-att");
     if (!a || !a.recorded) { ac.className = "chip"; ac.textContent = L.noAtt; }
     else { ac.className = "chip " + (a.rate >= 90 ? "good" : "warn"); ac.textContent = `❌ ${a.absent} · 🟡 ${a.excused}`; }
+    const o = k.other || {};
+    countUp($("kv-other"), o.value, money); deltaChip($("kc-other"), o.delta);
+    if (o.value != null) $("kc-other").textContent += ` · ${o.count || 0} ${L.items}`;
   }
 
   // ---------- grafiklar ----------
@@ -425,6 +437,27 @@
   }
 
   const PALETTE = ["#6d8bff", "#22d3ee", "#f472b6", "#fbbf24", "#34d399", "#a78bfa", "#fb923c", "#94a3b8"];
+  function renderOther(d) {
+    const c = chart("c-other"); if (!c) return;
+    c.__render = () => renderOther(d);
+    const cats = (d.other_categories || []).slice().reverse();
+    const total = cats.reduce((a, b) => a + b.value, 0);
+    $("other-hint").textContent = total ? `${L.total}: ${compact(total)} ${L.cur}` : "";
+    if (!total) { c.clear(); c.setOption({ graphic: [{ type: "text", left: "center", top: "middle", style: { text: L.noData, fill: css("--muted"), font: "14px sans-serif" } }] }); return; }
+    const warn = css("--warn");
+    c.setOption({
+      animationDuration: 1100, animationEasing: "cubicOut",
+      grid: { left: 6, right: 54, top: 8, bottom: 4, containLabel: true },
+      tooltip: { ...tooltipBase(), trigger: "item", valueFormatter: v => `${fmt(v)} ${L.cur}` },
+      xAxis: { type: "value", show: false },
+      yAxis: { type: "category", data: cats.map(x => x.name), axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { ...baseText(), fontSize: 11.5, width: 130, overflow: "truncate" } },
+      series: [{ type: "bar", data: cats.map(x => x.value), barMaxWidth: 18,
+        itemStyle: { borderRadius: [4, 9, 9, 4], color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{ offset: 0, color: warn }, { offset: 1, color: warn + "44" }]) },
+        label: { show: true, position: "right", color: css("--text"), fontSize: 11, formatter: p => compact(p.value) } }],
+    }, true);
+  }
+
   function renderDonut(d) {
     const c = chart("c-donut"); if (!c) return;
     c.__render = () => renderDonut(d);
@@ -535,7 +568,7 @@
     $("range").textContent = d.range.start === d.range.end ? (d.label.match(/\(([^)]*)\)/) || [, ""])[1]
       : `${f(d.range.start).slice(0, 5)} — ${f(d.range.end)} · ${days} ${L.days}`;
     $("next").disabled = !d.can_next; $("prev").disabled = !d.can_prev;
-    renderKpis(d); renderTrend(d); renderDonut(d); renderGauge(d); renderTop(d); renderDeficit(d);
+    renderKpis(d); renderTrend(d); renderOther(d); renderDonut(d); renderGauge(d); renderTop(d); renderDeficit(d);
     $("foot").textContent = `${L.updated}: ${d.generated_at} · ${d.ms} ${L.ms} · Asia/Tashkent`;
   }
 
