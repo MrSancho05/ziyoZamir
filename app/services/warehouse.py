@@ -243,6 +243,7 @@ class WarehouseService:
         self._directory: Dict[str, List[str]] = {}
         self._directory_ts = 0.0
         self.cat_store = None          # storage.categories.CategoryStore (main.py da beriladi)
+        self.norm_store = None         # storage.norms.NormMemory: oxirgi kiritilgan Мин. остаток (main.py)
 
     # ---------- umumiy ----------
     def _ws(self, title: str):
@@ -1055,6 +1056,37 @@ class WarehouseService:
         except Exception:
             logger.warning("Yangi mahsulotni Справочник ga yozib bo'lmadi", exc_info=True)
         return row
+
+    # ---------- ✏️ mahsulot ma'lumotlarini tahrirlash ----------
+    def _update_fields_sync(self, name: str, fields: Dict[str, Any]) -> None:
+        """Остатки и Расходы dagi mahsulot qatori: unit / category / min (ustunlar sarlavha bo'yicha topiladi)."""
+        ws = self._ws(self.inventory_tab)
+        values = ws.get_all_values()
+        h = _header_index(values, "Наименование товара", "наименование")
+        cols = self._inv_cols(values[h] if values else [])
+        row = next((i + 1 for i, r in enumerate(values) if i > h and _key(_cell(r, cols["name"])) == _key(name)), None)
+        if row is None:
+            raise NotFoundError(name)
+        data = []
+        for key, value in fields.items():
+            if value is None or cols.get(key) is None:
+                continue
+            data.append({"range": rowcol_to_a1(row, cols[key] + 1),
+                         "values": [[num_out(value) if key == "min" else value]]})
+        if data:
+            ws.batch_update(data, value_input_option=ValueInputOption.user_entered)
+
+    async def update_product(self, name: str, unit: Optional[str] = None, category: Optional[str] = None,
+                             min_stock: Optional[float] = None) -> None:
+        """Birlik, kategoriya yoki Мин. остаток. Yangi birlik Справочник «Ед. изм.» ro'yxatiga ham qo'shiladi."""
+        await self._sheets.run(self._update_fields_sync, name,
+                               {"unit": unit, "category": category, "min": min_stock})
+        if unit:
+            try:
+                await self.add_directory_value(UNIT_KIND, unit)      # bor bo'lsa — hech narsa qilinmaydi
+            except Exception:
+                logger.warning("Birlikni Справочник ga yozib bo'lmadi", exc_info=True)
+        self.invalidate()
 
     async def add_product(self, name: str, category: str, unit: str, pack: float, min_stock: float) -> int:
         row = await self._sheets.run(self._add_product_sync, name, category, unit, pack, min_stock)

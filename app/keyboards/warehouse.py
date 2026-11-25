@@ -71,11 +71,13 @@ def products_kb(t: Dict[str, str], names: Sequence[str], page: int, pages: int,
     return grid(buttons, nav)
 
 
-def search_kb(t: Dict[str, str], names: Sequence[str], allow_new: bool) -> InlineKeyboardMarkup:
+def search_kb(t: Dict[str, str], names: Sequence[str], allow_new: bool,
+              query: str = "") -> InlineKeyboardMarkup:
     buttons = [_b(_short(n), "p", i) for i, n in enumerate(names)]
     nav: List[List[InlineKeyboardButton]] = []
     if allow_new:
-        nav.append([_b(t["wh_btn_new_product"], "new")])
+        label = t["wh_btn_add_query"].format(query=_short(query, 22)) if query else t["wh_btn_new_product"]
+        nav.append([_b(label, "new")])
     nav.append([_b(t["wh_btn_cats"], "cats")])
     nav.append(cancel_row(t, back=False))
     return grid(buttons, nav)
@@ -190,3 +192,54 @@ def quick_value_kb(t: Dict[str, str], action: str, label: str) -> InlineKeyboard
 
 def confirm_kb(t: Dict[str, str], yes_label: str) -> InlineKeyboardMarkup:
     return grid([_b(yes_label, "ok")], [cancel_row(t)], cols=1)
+
+
+# ---------- topilmadi -> yangi mahsulot ----------
+def not_found_kb(t: Dict[str, str], query: str) -> InlineKeyboardMarkup:
+    """❌ topilmadi: [➕ «query» ni omborga qo'shish] [🔍 Boshqa nom bilan qidirish] [⬅️ Orqaga] [❌]."""
+    return grid([], [[_b(t["wh_btn_add_query"].format(query=_short(query, 22)), "new")],
+                     [_b(t["wh_btn_search_again"], "srch")],
+                     [_b(t["wh_btn_step_back"], "cats"), _b(t["wh_btn_cancel"], "cancel")]])
+
+
+def short_search_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
+    return grid([], [[_b(t["wh_btn_cats"], "cats")], cancel_row(t, back=False)])
+
+
+def created_kb(t: Dict[str, str], flow: str) -> InlineKeyboardMarkup:
+    """Yangi mahsulot saqlangandan keyin: shu mahsulot bilan davom etish yoki ma'lumotlarini tahrirlash."""
+    cont = t["wh_btn_cont_out"] if flow == "out" else t["wh_btn_cont_in"]
+    return grid([], [[_b(cont, "cont")], [_b(t["wh_btn_edit_product"], "ed")], cancel_row(t, back=False)])
+
+
+# ---------- ✏️ mahsulot ma'lumotlari ----------
+def edit_kb(t: Dict[str, str], can_continue: Optional[str] = None) -> InlineKeyboardMarkup:
+    nav: List[List[InlineKeyboardButton]] = []
+    if can_continue:
+        nav.append([_b(t["wh_btn_cont_out"] if can_continue == "out" else t["wh_btn_cont_in"], "cont")])
+    nav += [[_b(t["wh_btn_back"], "pmm")], cancel_row(t, back=False)]
+    return grid([_b(t["wh_ef_name"], "ef", k="name"), _b(t["wh_ef_unit"], "ef", k="unit"),
+                 _b(t["wh_ef_cat"], "ef", k="cat"), _b(t["wh_ef_min"], "ef", k="min")], nav)
+
+
+def pick_kb(t: Dict[str, str], labels: Sequence[str], action: str, current: str = "") -> InlineKeyboardMarkup:
+    return grid([_b(("✅ " if lbl == current else "") + _short(lbl, 24), action, i) for i, lbl in enumerate(labels)],
+                [cancel_row(t)])
+
+
+def norm_kb(t: Dict[str, str], suggestion: Optional[str], unit: str) -> InlineKeyboardMarkup:
+    """Мин. норматив: [💡 Tavsiya: N unit (oxirgi kiritilgan)] [0 (kuzatilmasin)] + qo'lda yozish."""
+    buttons = [_b(t["wh_btn_norm_suggest"].format(norm=suggestion, unit=unit), "mns")] if suggestion else []
+    buttons.append(_b(t["wh_btn_norm_zero"], "mn0"))
+    return grid(buttons, [cancel_row(t)], cols=1)
+
+
+# ---------- xatolardan tiklanish ----------
+def zero_stock_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
+    return grid([], [[_b(t["wh_btn_to_inflow"], "tokir")], [_b(t["wh_btn_step_back"], "cats"),
+                                                            _b(t["wh_btn_cancel"], "cancel")]])
+
+
+def over_stock_kb(t: Dict[str, str], avail: str, unit: str) -> InlineKeyboardMarkup:
+    return grid([], [[_b(t["wh_btn_take_all"].format(avail=avail, unit=unit), "qall")],
+                     [_b(t["wh_btn_other_qty"], "qre")], cancel_row(t)])

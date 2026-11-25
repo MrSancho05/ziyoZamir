@@ -22,6 +22,7 @@ from app.keyboards.webapp import set_webapp_url
 from app.services.webapp_menu import sync_all_menu_buttons
 from app.storage.attendance_store import AttendanceStore
 from app.storage.categories import CategoryStore
+from app.storage.norms import NormMemory
 from app.storage.database import Database
 from app.storage.memory import UserStore
 from app.storage.flows_store import FlowStore
@@ -58,6 +59,7 @@ async def main() -> None:
                                  tz=settings.timezone)
     warehouse.cat_store = CategoryStore(db)            # umumiy kategoriyalar (6 ta standart bilan)
     await warehouse.cat_store.ensure_seeded()
+    warehouse.norm_store = NormMemory(db)              # oxirgi Мин. остаток tavsiyalari
     report_cache = ReportCache(db)
     try:
         # yetishmagan ustunlar jadval OXIRIGA qo'shiladi (o'rtaga hech qachon); qayta ishga tushirish xavfsiz
