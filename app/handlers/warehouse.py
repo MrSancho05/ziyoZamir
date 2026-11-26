@@ -30,12 +30,15 @@ from app.keyboards import warehouse as kb
 from app.keyboards.callbacks import WhCb
 from app.locales.texts import all_texts, get_texts, menu_texts
 from app.models import User
+from app.services import kromka
 from app.services.flows import FlowsService
 from app.services.categories import examples as cat_examples
 from app.services.categories import label as cat_label
 from app.services.categories import suggest as suggest_category
 from app.services.search import exact_match, normalize, search_products
 from app.services.warehouse import (
+    ADJ_IN_NOTE,
+    ADJ_OUT_NOTE,
     MASTER,
     RECIPIENT,
     UNIT_KIND,
@@ -93,6 +96,10 @@ class WhSt(StatesGroup):
     kir_pack = State()       # 📥 Kirim davomida karobkadagi miqdorni o'zgartirish
     ed_pack = State()        # ✏️ karobkadagi miqdor (В упаковке)
     ed_price = State()       # ✏️ 💰 narxni belgilash / o'zgartirish
+    ed_adj = State()         # ⚖️ qoldiqni to'g'rilash: +N / -N kutilmoqda
+    krm_size = State()       # 🎞 Кромка ПВХ: o'lcham tanlanmoqda
+    krm_color = State()      # 🎞 Кромка ПВХ: mavjud rang (faqat tugma)
+    krm_new = State()        # 🎞 ➕ yangi kromka: rang nomi kutilmoqda
 
 
 # ---------------- yordamchilar ----------------
@@ -187,7 +194,9 @@ async def _show_categories(target: Message, t: Dict[str, str], state: FSMContext
     await state.update_data(cats=cats, view="pick")
     text = f"{_title(t, data.get('flow', FLOW_IN))}\n\n{t['wh_pick'] if cats else t['wh_no_cats']}"
     labels = [cat_label(c, _lang(t)) for c in cats]
-    await _show(target, text, kb.categories_kb(t, labels, len(data.get("cart", []))), edit)
+    flow = data.get("flow", FLOW_IN)
+    await _show(target, text, kb.categories_kb(t, labels, len(data.get("cart", [])),
+                                               kromka=flow in (FLOW_IN, FLOW_OUT)), edit)
 
 
 async def _show_products_page(target: Message, t: Dict[str, str], state: FSMContext, page: int) -> None:
@@ -275,9 +284,14 @@ async def add_more(callback: CallbackQuery, t: Dict[str, str], state: FSMContext
 @router.callback_query(StateFilter(WhSt), WhCb.filter(F.a == "cat"))
 async def pick_category(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
                         warehouse: WarehouseService) -> None:
-    cats = (await state.get_data()).get("cats", [])
+    data = await state.get_data()
+    cats = data.get("cats", [])
     if callback_data.i >= len(cats):
         await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    if cats[callback_data.i] == kromka.CATEGORY and data.get("flow") in (FLOW_IN, FLOW_OUT):
+        await callback.answer()
+        await _krm_sizes(callback.message, t, state, edit=True)
         return
     try:
         names = [p.name for p in await warehouse.products_in(cats[callback_data.i])]
@@ -313,6 +327,11 @@ async def search_text(message: Message, t: Dict[str, str], state: FSMContext,
     flow = data.get("flow", FLOW_IN)
     if len(query.replace(" ", "")) < 2:                     # 1 harf — qidirib bo'lmaydi: qanday qidirishni tushuntiramiz
         await message.answer(t["wh_search_short"], reply_markup=kb.short_search_kb(t))
+        return
+    if flow in (FLOW_IN, FLOW_OUT) and kromka.is_kromka(query):
+        # kromka faqat o'lcham -> mavjud rang tugmalari orqali (erkin nom bilan kiritilmaydi)
+        await state.update_data(q=query, view="pick", np_cat_hint=None)
+        await _krm_route(message, t, state, warehouse, query, edit=False)
         return
     try:
         names = [p.name for p in await warehouse.catalog()]
@@ -819,6 +838,11 @@ async def _np_set_name(target: Message, t: Dict[str, str], state: FSMContext, wa
                        name: str, edit: bool) -> None:
     if not name:
         return
+    np0 = (await state.get_data()).get("np") or {}
+    if np0.get("ret") in (FLOW_IN, FLOW_OUT) and kromka.is_kromka(name) and not np0.get("krm"):
+        await state.update_data(flow=np0["ret"], np=None)
+        await _krm_route(target, t, state, warehouse, name, edit)
+        return
     try:
         catalog = await warehouse.catalog(force=True)
         cats = await warehouse.all_categories()
@@ -874,6 +898,9 @@ async def np_suggest_answer(callback: CallbackQuery, callback_data: WhCb, t: Dic
 
 
 async def _np_ask_unit(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
+    if ((await state.get_data()).get("np") or {}).get("cat") == kromka.CATEGORY:
+        await _np_ask_pack(target, t, state, kromka.UNIT, edit)        # kromka — doim «рулон»
+        return
     units = (await state.get_data()).get("np_units") or list(UNITS)
     await state.set_state(WhSt.np_unit)
     await _show(target, t["wh_np_unit"], kb.np_unit_kb(t, units), edit)
@@ -1492,7 +1519,12 @@ async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContex
     elif st == WhSt.np_unit.state:
         await _np_ask_category(msg, t, state, data.get("np_cats", []), edit=True)
     elif st == WhSt.np_pack.state:
-        await _np_ask_unit(msg, t, state, edit=True)
+        if (data.get("np") or {}).get("cat") == kromka.CATEGORY:
+            await _np_ask_category(msg, t, state, data.get("np_cats", []), edit=True)
+        else:
+            await _np_ask_unit(msg, t, state, edit=True)
+    elif st == WhSt.np_min.state and (data.get("np") or {}).get("krm"):
+        await _krm_new_prompt(msg, t, state, warehouse, edit=True)
     elif st == WhSt.np_min.state:
         await _np_ask_pack(msg, t, state, (data.get("np") or {}).get("unit", "шт"), edit=True)
     elif st == WhSt.np_confirm.state:
@@ -1510,8 +1542,14 @@ async def step_back(callback: CallbackQuery, t: Dict[str, str], state: FSMContex
             await _show_mode(msg, t, state, edit=True)
         else:
             await _ask_qty(msg, t, state, edit=True)
+    elif st == WhSt.krm_size.state:
+        await _show_categories(msg, t, state, warehouse, edit=True)
+    elif st == WhSt.krm_color.state:
+        await _krm_sizes(msg, t, state, edit=True)
+    elif st == WhSt.krm_new.state:
+        await _krm_colors(msg, t, state, warehouse, data.get("krm_size") or kromka.SIZES[0], edit=True)
     elif st in (WhSt.ed_unit.state, WhSt.ed_cat.state, WhSt.ed_min.state, WhSt.ed_pack.state,
-                WhSt.ed_price.state):
+                WhSt.ed_price.state, WhSt.ed_adj.state):
         await _show_edit_card(msg, t, state, warehouse, data.get("ed_name", ""), edit=True)
     elif st == WhSt.ed_card.state:
         await state.clear()
@@ -1667,8 +1705,8 @@ async def _show_edit_card(target: Message, t: Dict[str, str], state: FSMContext,
                                   min=_n(product.min_stock), stock=_n(product.stock), pack=_n(product.pack),
                                   price=price)
     can_continue = data.get("cont_flow") if data.get("last_np") == product.name else None
-    await _show(target, text, kb.edit_kb(t, can_continue, pack=_n(product.pack), unit=product.unit, price=price),
-                edit)
+    await _show(target, text, kb.edit_kb(t, can_continue, pack=_n(product.pack), unit=product.unit, price=price,
+                                         stock=_n(product.stock)), edit)
 
 
 @router.callback_query(WhCb.filter(F.a == "ed"))
@@ -1701,7 +1739,10 @@ async def edit_field(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, 
             pack=_n(product.pack), unit=escape(product.unit)), kb.pack_kb(t, "epk"), True)
         return
     if callback_data.k == "price":
-        await _ask_edit_price(callback.message, t, state, product, edit=True)
+        await _ask_edit_price(callback.message, t, state, product, edit=True, warehouse=warehouse)
+        return
+    if callback_data.k == "adj":
+        await _ask_adj(callback.message, t, state, await warehouse.product(name, force=True) or product, edit=True)
         return
     if callback_data.k == "name":
         await state.update_data(rn={"old": name})
@@ -2029,7 +2070,10 @@ async def lookup_action(callback: CallbackQuery, callback_data: WhCb, t: Dict[st
         return
     if callback_data.k == "pr":
         await state.update_data(ed_name=product.name)
-        await _ask_edit_price(callback.message, t, state, product, edit=False)
+        await _ask_edit_price(callback.message, t, state, product, edit=False, warehouse=warehouse)
+        return
+    if callback_data.k == "adj":
+        await _ask_adj(callback.message, t, state, product, edit=False)
         return
     await state.update_data(flow=FLOW_OUT if callback_data.k == "out" else FLOW_IN, cart=[])
     await _start_item(callback.message, t, state, product, edit=False)
@@ -2162,12 +2206,20 @@ async def kirim_pack_apply(callback: CallbackQuery, callback_data: WhCb, t: Dict
 
 # ---------------- 💰 narxni belgilash / o'zgartirish ----------------
 async def _ask_edit_price(target: Message, t: Dict[str, str], state: FSMContext, product: Product,
-                          edit: bool) -> None:
+                          edit: bool, warehouse: Optional[WarehouseService] = None) -> None:
     await state.set_state(WhSt.ed_price)
     await state.update_data(ed_name=product.name)
     current = _n(product.avg_price) if product.avg_price else "—"
+    last = None
+    if warehouse is not None:
+        try:
+            warehouse.invalidate()                         # «Приход» qayta o'qiladi: eng pastdagi (oxirgi) narx
+            last = await warehouse.last_price(product.name)
+        except Exception:
+            logger.warning("Oxirgi narxni o'qib bo'lmadi", exc_info=True)
     await _show(target, t["wh_setprice_prompt"].format(name=escape(product.name), unit=escape(product.unit),
-                                                       price=current), kb.cancel_kb(t), edit)
+                                                       price=current, last=_n(last) if last else "—"),
+                kb.cancel_kb(t), edit)
 
 
 @router.message(WhSt.ed_price, F.text)
@@ -2200,6 +2252,217 @@ async def edit_price_text(message: Message, t: Dict[str, str], state: FSMContext
             old=_n(res["old_price"]) if res.get("old_price") else "—",
             avg=_n(res["avg"]) if res.get("avg") is not None else "—", count=res.get("count", 1)))
     await _show_edit_card(message, t, state, warehouse, name, edit=False)
+
+
+# ---------------- ⚖️ qoldiqni to'g'rilash (inventarizatsiya) ----------------
+async def _ask_adj(target: Message, t: Dict[str, str], state: FSMContext, product: Product, edit: bool) -> None:
+    await state.set_state(WhSt.ed_adj)
+    await state.update_data(ed_name=product.name)
+    await _show(target, t["wh_adj_prompt"].format(name=escape(product.name), stock=_n(product.stock),
+                                                  unit=escape(product.unit)), kb.cancel_kb(t), edit)
+
+
+@router.message(WhSt.ed_adj, F.text)
+async def adjust_text(message: Message, t: Dict[str, str], state: FSMContext,
+                      warehouse: WarehouseService) -> None:
+    """+N — «Приход» ga tuzatish qatori, -N — «Расход» ga (qoldiq manfiy bo'lib qolmaydi)."""
+    raw = (message.text or "").strip()
+    value = parse_number(raw)
+    if value is None:
+        await message.answer(t["wh_adj_nan"].format(raw=escape(raw[:30])), reply_markup=kb.cancel_kb(t))
+        return
+    if abs(value) < 1e-9:
+        await message.answer(t["wh_adj_zero"], reply_markup=kb.cancel_kb(t))
+        return
+    if abs(value) > 10**9:
+        await message.answer(t["wh_adj_big"], reply_markup=kb.cancel_kb(t))
+        return
+    name = (await state.get_data()).get("ed_name", "")
+    try:
+        product = await warehouse.product(name, force=True)          # Google Sheets dagi eng so'nggi qoldiq
+    except Exception:
+        logger.exception("Katalogni o'qib bo'lmadi")
+        await message.answer(t["error"])
+        return
+    if product is None:
+        await message.answer(t["wh_not_in_catalog"])
+        return
+    if product.stock + value < -1e-9:
+        await message.answer(t["wh_adj_negative"].format(stock=_n(product.stock), unit=escape(product.unit)),
+                             reply_markup=kb.cancel_kb(t))
+        return
+    try:
+        if value > 0:
+            # o'rtacha narx bilan: «Средняя цена» o'zgarmaydi, «Сумма остатка» to'g'ri qoladi
+            await warehouse.save_inflow([InflowItem(name=product.name, unit=product.unit, qty=value,
+                                                    price=product.avg_price or None, supplier=ADJ_IN_NOTE)])
+            sheet, note = warehouse.inflow_tab, ADJ_IN_NOTE
+        else:
+            await warehouse.save_outflow([OutflowItem(name=product.name, unit=product.unit, qty=-value, purpose="",
+                                                      recipient=ADJ_OUT_NOTE, stock_before=product.stock)])
+            sheet, note = warehouse.outflow_tab, ADJ_OUT_NOTE
+    except Exception:
+        logger.exception("Qoldiqni to'g'rilab bo'lmadi")
+        await message.answer(t["wh_save_error"])
+        return
+    try:
+        after = await warehouse.product(product.name, force=True)
+    except Exception:
+        after = None
+    new_stock = after.stock if after is not None else product.stock + value
+    delta = ("+" if value > 0 else "−") + _n(abs(value))
+    await message.answer(t["wh_adj_done"].format(name=escape(product.name), old=_n(product.stock), new=_n(new_stock),
+                                                 unit=escape(product.unit), delta=delta, sheet=escape(sheet),
+                                                 note=escape(note)))
+    await _show_edit_card(message, t, state, warehouse, product.name, edit=False)
+
+
+# ---------------- 🎞 Кромка ПВХ: o'lcham -> mavjud rang (faqat tugma) -> ➕ yangi kromka ----------------
+async def _krm_products(warehouse: WarehouseService, size: str, force: bool = False) -> List[Product]:
+    items = [p for p in await warehouse.catalog(force) if kromka.matches_size(p.name, size)]
+    return sorted(items, key=lambda p: kromka.color_of(p.name).casefold())
+
+
+def _krm_labels(t: Dict[str, str], items: List[Product], size: str) -> List[str]:
+    return [t["wh_krm_color_btn"].format(color=kromka.color_of(p.name) or "—", size=size, stock=_n(p.stock),
+                                         unit=p.unit) for p in items]
+
+
+async def _krm_sizes(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
+    await state.set_state(WhSt.krm_size)
+    await state.update_data(view="pick")
+    await _show(target, t["wh_krm_size"], kb.kromka_size_kb(t, kromka.SIZES), edit)
+
+
+async def _krm_colors(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                      size: str, edit: bool) -> None:
+    try:
+        items = await _krm_products(warehouse, size)
+    except Exception:
+        logger.exception("Katalogni o'qib bo'lmadi")
+        await target.answer(t["error"])
+        return
+    names = [p.name for p in items]
+    await state.set_state(WhSt.krm_color)
+    await state.update_data(krm_size=size, krm_opts=names, opts=names, view="pick")
+    text = t["wh_krm_colors" if items else "wh_krm_colors_empty"].format(size=size)
+    await _show(target, text, kb.kromka_colors_kb(t, _krm_labels(t, items, size), size), edit)
+
+
+async def _krm_new_prompt(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                          edit: bool) -> None:
+    size = (await state.get_data()).get("krm_size") or kromka.SIZES[0]
+    try:
+        items = await _krm_products(warehouse, size)
+    except Exception:
+        items = []
+    await state.set_state(WhSt.krm_new)
+    await state.update_data(krm_opts=[p.name for p in items])
+    text = t["wh_krm_new_prompt"].format(size=size) + (t["wh_krm_new_ref"] if items else "")
+    await _show(target, text, kb.kromka_ref_kb(t, _krm_labels(t, items, size)), edit)
+
+
+async def _krm_route(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,
+                     text: str, edit: bool) -> None:
+    """Matnda o'lcham bo'lsa — darhol ranglar, bo'lmasa — o'lcham tanlovi."""
+    size = kromka.parse_size(text)
+    if size:
+        await _krm_colors(target, t, state, warehouse, size, edit)
+    else:
+        await _krm_sizes(target, t, state, edit)
+
+
+@router.callback_query(StateFilter(WhSt), WhCb.filter(F.a == "krm"))
+async def kromka_open(callback: CallbackQuery, t: Dict[str, str], state: FSMContext) -> None:
+    if (await state.get_data()).get("flow") not in (FLOW_IN, FLOW_OUT):
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer()
+    await _krm_sizes(callback.message, t, state, edit=True)
+
+
+@router.callback_query(WhSt.krm_size, WhCb.filter(F.a == "krs"))
+async def kromka_size(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                      warehouse: WarehouseService) -> None:
+    if callback_data.i >= len(kromka.SIZES):
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer()
+    await _krm_colors(callback.message, t, state, warehouse, kromka.SIZES[callback_data.i], edit=True)
+
+
+@router.message(WhSt.krm_size, F.text)
+async def kromka_size_text(message: Message, t: Dict[str, str], state: FSMContext,
+                           warehouse: WarehouseService) -> None:
+    size = kromka.parse_size(message.text)
+    if size:
+        await _krm_colors(message, t, state, warehouse, size, edit=False)
+        return
+    await message.answer(t["wh_krm_size_hint"], reply_markup=kb.kromka_size_kb(t, kromka.SIZES))
+
+
+@router.callback_query(StateFilter(WhSt.krm_color, WhSt.krm_new), WhCb.filter(F.a == "krc"))
+async def kromka_pick(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, str], state: FSMContext,
+                      warehouse: WarehouseService) -> None:
+    opts = (await state.get_data()).get("krm_opts") or []
+    if callback_data.i >= len(opts):
+        await callback.answer(t["wh_expired"], show_alert=True)
+        return
+    await callback.answer()
+    await state.update_data(opts=opts)
+    await _pick(callback.message, t, state, warehouse, opts[callback_data.i], edit=True)
+
+
+@router.message(WhSt.krm_color, F.text)
+async def kromka_color_text(message: Message, t: Dict[str, str], state: FSMContext,
+                            warehouse: WarehouseService) -> None:
+    """Rangni yozib bo'lmaydi: faqat mavjud rang tugmasi yoki «➕ Yangi kromka qo'shish»."""
+    size = (await state.get_data()).get("krm_size") or kromka.SIZES[0]
+    await message.answer(t["wh_krm_strict"])
+    await _krm_colors(message, t, state, warehouse, size, edit=False)
+
+
+@router.callback_query(WhSt.krm_color, WhCb.filter(F.a == "krn"))
+async def kromka_new(callback: CallbackQuery, t: Dict[str, str], state: FSMContext,
+                     warehouse: WarehouseService) -> None:
+    await callback.answer()
+    await _krm_new_prompt(callback.message, t, state, warehouse, edit=True)
+
+
+@router.message(WhSt.krm_new, F.text)
+async def kromka_new_name(message: Message, t: Dict[str, str], state: FSMContext,
+                          warehouse: WarehouseService) -> None:
+    data = await state.get_data()
+    size = data.get("krm_size") or kromka.SIZES[0]
+    color = kromka.clean_color(clean_text(message.text, 60))
+    try:
+        catalog = await warehouse.catalog(force=True)
+    except Exception:
+        logger.exception("Katalogni o'qib bo'lmadi")
+        await message.answer(t["error"])
+        return
+    items = sorted((p for p in catalog if kromka.matches_size(p.name, size)),
+                   key=lambda p: kromka.color_of(p.name).casefold())
+    await state.update_data(krm_opts=[p.name for p in items])
+    ref = kb.kromka_ref_kb(t, _krm_labels(t, items, size))
+    if not color:
+        await message.answer(t["wh_krm_bad_name"], reply_markup=ref)
+        return
+    name = kromka.build_name(color, size)
+    dup = exact_match(name, [p.name for p in catalog]) or next(
+        (p.name for p in items if normalize(kromka.color_of(p.name)) == normalize(color)), None)
+    if dup:
+        await message.answer(t["wh_krm_dup"].format(name=escape(dup)), reply_markup=ref)
+        return
+    try:
+        await warehouse.add_category(kromka.CATEGORY)
+    except Exception:
+        logger.warning("Kategoriyani qo'shib bo'lmadi", exc_info=True)
+    flow = data.get("flow")
+    # kategoriya / birlik / karobka avtomatik: faqat Мин. норматив so'raladi, keyin tasdiqlash
+    await state.update_data(np={"ret": flow if flow in (FLOW_IN, FLOW_OUT) else None, "name": name,
+                                "cat": kromka.CATEGORY, "unit": kromka.UNIT, "pack": 1.0, "krm": size})
+    await _np_ask_min(message, t, state, 1.0, edit=False, warehouse=warehouse)
 
 
 # ---------------- eskirgan tugmalar ----------------

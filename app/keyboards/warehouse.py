@@ -45,10 +45,12 @@ def _cat_label(label: str) -> str:
     return _short(label, 26) if label and not label[0].isalnum() else f"📂 {_short(label, 24)}"
 
 
-def categories_kb(t: Dict[str, str], cats: Sequence[str], cart_size: int) -> InlineKeyboardMarkup:
-    """`cats`: foydalanuvchi tilidagi nomlar (tartibi holatdagi kanonik ro'yxat bilan bir xil)."""
+def categories_kb(t: Dict[str, str], cats: Sequence[str], cart_size: int,
+                  kromka: bool = False) -> InlineKeyboardMarkup:
+    """`cats`: foydalanuvchi tilidagi nomlar (tartibi holatdagi kanonik ro'yxat bilan bir xil).
+    kromka=True (📥 Kirim / 📤 Chiqim): yuqorida «🎞 Кромка ПВХ» tezkor tugmasi."""
     buttons = [_b(_cat_label(c), "cat", i) for i, c in enumerate(cats)]
-    nav = []
+    nav = [[_b(t["wh_btn_kromka"], "krm")]] if kromka else []
     if cart_size:
         nav.append([_b(f"🛒 ({cart_size})", "cart")])
     nav.append(cancel_row(t, back=False))          # birinchi qadam: orqaga yo'q
@@ -203,9 +205,9 @@ def seq_kb(t: Dict[str, str], last_price: Optional[str]) -> InlineKeyboardMarkup
 
 
 def lookup_kb(t: Dict[str, str], index: int) -> InlineKeyboardMarkup:
-    """Topilgan mahsulot kartasi ostida faqat emoji: [📥] [📤] [✏️] [💰] (har bir karta — alohida xabar)."""
+    """Topilgan mahsulot kartasi ostida faqat emoji: [📥] [📤] [✏️] [💰] [⚖️] (har bir karta — alohida xabar)."""
     return grid([], [[_b("📥", "lk", index, k="in"), _b("📤", "lk", index, k="out"), _b("✏️", "lk", index, k="ed"),
-                      _b("💰", "lk", index, k="pr")]])
+                      _b("💰", "lk", index, k="pr"), _b("⚖️", "lk", index, k="adj")]])
 
 
 def lookup_add_kb(t: Dict[str, str], query: str) -> InlineKeyboardMarkup:
@@ -256,10 +258,11 @@ def created_kb(t: Dict[str, str], flow: str) -> InlineKeyboardMarkup:
 
 # ---------- ✏️ mahsulot ma'lumotlari ----------
 def edit_kb(t: Dict[str, str], can_continue: Optional[str] = None, pack: str = "1", unit: str = "",
-            price: str = "—") -> InlineKeyboardMarkup:
+            price: str = "—", stock: str = "0") -> InlineKeyboardMarkup:
     nav: List[List[InlineKeyboardButton]] = [
         [_b(t["wh_ef_pack"].format(pack=pack, unit=unit), "ef", k="pack")],
-        [_b(t["wh_ef_price"].format(price=price), "ef", k="price")]]
+        [_b(t["wh_ef_price"].format(price=price), "ef", k="price")],
+        [_b(t["wh_ef_adj"].format(stock=stock, unit=unit), "ef", k="adj")]]
     if can_continue:
         nav.append([_b(t["wh_btn_cont_out"] if can_continue == "out" else t["wh_btn_cont_in"], "cont")])
     nav += [[_b(t["wh_btn_back"], "pmm")], cancel_row(t, back=False)]
@@ -293,3 +296,21 @@ def over_stock_kb(t: Dict[str, str], avail: str, unit: str) -> InlineKeyboardMar
 def unpriced_reminder_kb(t: Dict[str, str], n: int) -> InlineKeyboardMarkup:
     """Narxsiz kirim eslatmasi: 1 bosishda birma-bir narx kiritish."""
     return grid([], [[_b(t["wh_btn_seq"].format(n=n), "seq")], [_b(t["wh_btn_unp_list"], "unp")]])
+
+
+# ---------- 🎞 Кромка ПВХ: o'lcham -> mavjud rang (faqat tugma) -> ➕ yangi kromka ----------
+def kromka_size_kb(t: Dict[str, str], sizes: Sequence[str]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(*[_b(s, "krs", i) for i, s in enumerate(sizes)])
+    kb.row(*cancel_row(t))
+    return kb.as_markup()
+
+
+def kromka_colors_kb(t: Dict[str, str], labels: Sequence[str], size: str) -> InlineKeyboardMarkup:
+    return grid([_b(_short(lbl, 40), "krc", i) for i, lbl in enumerate(labels)],
+                [[_b(t["wh_btn_krm_new"].format(size=size), "krn")], cancel_row(t)], cols=1)
+
+
+def kromka_ref_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:
+    """Yangi kromka nomini so'rashda: mavjud ranglar (bosilsa — o'sha kromka tanlanadi)."""
+    return grid([_b(_short(lbl, 40), "krc", i) for i, lbl in enumerate(labels)], [cancel_row(t)], cols=1)

@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from typing import List
 
-from app.services.categories import DEFAULT_CATEGORIES
+from app.services.categories import ADDED_LATER, DEFAULT_CATEGORIES
 from app.storage.database import Database
 
 _SEED_KEY = "categories_seeded"
+_SEED_V2 = "categories_seeded_v2"          # 🎞 Кромка ПВХ
 
 
 class CategoryStore:
@@ -18,11 +19,19 @@ class CategoryStore:
         self._db = db
 
     async def ensure_seeded(self) -> None:
-        if await self._db.fetchone("SELECT value FROM kv WHERE key = ?", (_SEED_KEY,)):
+        if not await self._db.fetchone("SELECT value FROM kv WHERE key = ?", (_SEED_KEY,)):
+            for i, cat in enumerate(DEFAULT_CATEGORIES):
+                await self._db.execute("INSERT OR IGNORE INTO categories (name, sort) VALUES (?, ?)",
+                                       (cat.name, i))
+            await self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, '1')", (_SEED_KEY,))
+            await self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, '1')", (_SEED_V2,))
             return
-        for i, cat in enumerate(DEFAULT_CATEGORIES):
-            await self._db.execute("INSERT OR IGNORE INTO categories (name, sort) VALUES (?, ?)", (cat.name, i))
-        await self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, '1')", (_SEED_KEY,))
+        if not await self._db.fetchone("SELECT value FROM kv WHERE key = ?", (_SEED_V2,)):
+            order = {c.name: i for i, c in enumerate(DEFAULT_CATEGORIES)}
+            for name in ADDED_LATER:
+                await self._db.execute("INSERT OR IGNORE INTO categories (name, sort) VALUES (?, ?)",
+                                       (name, order.get(name, 50)))
+            await self._db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, '1')", (_SEED_V2,))
 
     async def names(self) -> List[str]:
         await self.ensure_seeded()

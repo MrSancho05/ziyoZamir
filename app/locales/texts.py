@@ -1593,3 +1593,58 @@ _V9_TEXTS = {
 }
 for _lang, _texts in _V9_TEXTS.items():
     TEXTS[_lang].update(_texts)
+
+
+# ---------------- ⚖️ qoldiqni to'g'rilash, oxirgi narx, 🎞 Кромка ПВХ, ixcham narxsiz ro'yxat ----------------
+_V10_TEXTS = {
+    "uz": {
+        "wh_ef_adj": "⚖️ Qoldiqni to‘g‘rilash ({stock} {unit})",
+        "wh_adj_prompt": "⚖️ <b>{name}</b> — Qoldiqni to‘g‘rilash (Inventarizatsiya)\nJoriy qoldiq: <b>{stock} {unit}</b>\n\n💡 <b>Qanday kiritish kerak?</b>\n• Qoldiqqa <b>qo‘shish</b> uchun oddiy musbat son yozing: masalan <code>15</code> (qoldiq +15 ga oshadi)\n• Qoldiqdan <b>ayirish</b> uchun minus (<code>-</code>) bilan yozing: masalan <code>-15</code> (qoldiqdan 15 ayiriladi)",
+        "wh_adj_nan": "⚠️ «{raw}» — bu son emas. Qo‘shish uchun <code>15</code>, ayirish uchun <code>-15</code> yozing.",
+        "wh_adj_zero": "⚠️ 0 bilan qoldiq o‘zgarmaydi. Qo‘shish uchun <code>15</code>, ayirish uchun <code>-15</code> yozing.",
+        "wh_adj_big": "⚠️ Son juda katta — tekshirib qayta yozing.",
+        "wh_adj_negative": "⚠️ Qoldiq manfiy bo‘lib qoladi: joriy qoldiq <b>{stock} {unit}</b>, ko‘pi bilan <code>-{stock}</code> ayirish mumkin.",
+        "wh_adj_done": "✅ <b>Qoldiq to‘g‘rilandi: {name}</b>\n📊 {old} → <b>{new} {unit}</b> ({delta})\n📝 «{sheet}» ga yozildi: <i>{note}</i>",
+        "wh_setprice_prompt": "💰 <b>{name}</b>\n🧾 Oxirgi belgilangan narx: <b>{last}</b> so‘m\n📊 O‘rtacha narx: {price} so‘m\n\n1 {unit} uchun yangi narxni so‘mda kiriting (masalan: <code>15000</code>):\n\n<i>Narx «Приход» dagi shu tovarning eng oxirgi narxsiz (bo‘lmasa — eng oxirgi) kirimiga yoziladi; «Средняя цена» va «Сумма остатка» formulalari o‘zi qayta hisoblaydi.</i>",
+        "wh_btn_kromka": "🎞 Кромка ПВХ",
+        "wh_krm_size": "🎞 <b>Кромка ПВХ</b>\n\nO‘lchamni tanlang 👇",
+        "wh_krm_size_hint": "⚠️ O‘lchamni tugma orqali tanlang: <b>1/19</b>, <b>1/35</b>, <b>2/19</b> yoki <b>2/35</b>.",
+        "wh_krm_colors": "🎞 <b>Кромка ПВХ {size}</b>\n\nOmbordagi rangni tanlang 👇",
+        "wh_krm_colors_empty": "🎞 <b>Кромка ПВХ {size}</b>\n\nBu o‘lchamda omborda hali kromka yo‘q. Avval «➕ Yangi kromka qo‘shish» orqali qo‘shing.",
+        "wh_krm_strict": "⚠️ Omborda faqat ro‘yxatdagi mavjud kromka ranglaridan tugma orqali tanlash mumkin. Agar yangi rang kelgan bo‘lsa, avval «➕ Yangi kromka qo‘shish» tugmasi orqali uni omborga qo‘shing.",
+        "wh_btn_krm_new": "➕ Yangi kromka ({size}) qo‘shish",
+        "wh_krm_color_btn": "🎨 {color} {size} ({stock} {unit})",
+        "wh_krm_new_prompt": "➕ <b>Yangi kromka: {size}</b>\n\n✍️ Rang nomini yozing (masalan: <code>Noch koma</code>).\nSaqlanadi: <code>Кромка Noch koma {size}</code>\n🏷 Kategoriya: Кромка ПВХ · 📏 Birlik: рулон",
+        "wh_krm_new_ref": "\n\n📋 Bu o‘lchamdagi mavjud ranglar (takrorlanmasin; bosilsa — shu kromka tanlanadi):",
+        "wh_krm_dup": "⚠️ «{name}» omborda allaqachon bor — quyidagi tugma orqali tanlang.",
+        "wh_krm_bad_name": "⚠️ Rang nomini yozing (masalan: <code>Noch koma</code>).",
+        "dg_unp_title": "⚠️ <b>Narxi kiritilmagan mahsulotlar ({count} ta):</b>",
+        "dg_unp_item": "{i}. {name} — {qty} {unit} ({date} | {days} kun | Eslatma: {r}x)",
+    },
+    "ru": {
+        "wh_ef_adj": "⚖️ Корректировка остатка ({stock} {unit})",
+        "wh_adj_prompt": "⚖️ <b>{name}</b> — Корректировка остатка\nТекущий остаток: <b>{stock} {unit}</b>\n\n💡 <b>Как вводить?</b>\n• Чтобы <b>прибавить</b>, введите число: например <code>15</code> (+15)\n• Чтобы <b>вычесть</b>, введите с минусом: например <code>-15</code> (-15)",
+        "wh_adj_nan": "⚠️ «{raw}» — это не число. Чтобы прибавить — <code>15</code>, вычесть — <code>-15</code>.",
+        "wh_adj_zero": "⚠️ 0 не меняет остаток. Чтобы прибавить — <code>15</code>, вычесть — <code>-15</code>.",
+        "wh_adj_big": "⚠️ Слишком большое число — проверьте и введите снова.",
+        "wh_adj_negative": "⚠️ Остаток станет отрицательным: сейчас <b>{stock} {unit}</b>, можно вычесть не больше <code>-{stock}</code>.",
+        "wh_adj_done": "✅ <b>Остаток скорректирован: {name}</b>\n📊 {old} → <b>{new} {unit}</b> ({delta})\n📝 Записано в «{sheet}»: <i>{note}</i>",
+        "wh_setprice_prompt": "💰 <b>{name}</b>\n🧾 Последняя указанная цена: <b>{last}</b> сум\n📊 Средняя цена: {price} сум\n\nВведите новую цену за 1 {unit} в сумах (например: <code>15000</code>):\n\n<i>Цена записывается в последний приход этого товара без цены (если таких нет — в последний приход) в «Приход»; формулы «Средняя цена» и «Сумма остатка» пересчитаются сами.</i>",
+        "wh_btn_kromka": "🎞 Кромка ПВХ",
+        "wh_krm_size": "🎞 <b>Кромка ПВХ</b>\n\nВыберите размер 👇",
+        "wh_krm_size_hint": "⚠️ Выберите размер кнопкой: <b>1/19</b>, <b>1/35</b>, <b>2/19</b> или <b>2/35</b>.",
+        "wh_krm_colors": "🎞 <b>Кромка ПВХ {size}</b>\n\nВыберите цвет со склада 👇",
+        "wh_krm_colors_empty": "🎞 <b>Кромка ПВХ {size}</b>\n\nКромки этого размера на складе пока нет. Сначала добавьте её через «➕ Добавить новую кромку».",
+        "wh_krm_strict": "⚠️ На складе можно выбрать только существующий цвет кромки — кнопкой из списка. Если пришёл новый цвет, сначала добавьте его через «➕ Добавить новую кромку».",
+        "wh_btn_krm_new": "➕ Добавить новую кромку ({size})",
+        "wh_krm_color_btn": "🎨 {color} {size} ({stock} {unit})",
+        "wh_krm_new_prompt": "➕ <b>Новая кромка: {size}</b>\n\n✍️ Напишите название цвета (например: <code>Noch koma</code>).\nБудет сохранено: <code>Кромка Noch koma {size}</code>\n🏷 Категория: Кромка ПВХ · 📏 Ед. изм.: рулон",
+        "wh_krm_new_ref": "\n\n📋 Уже есть цвета этого размера (чтобы не было дублей; нажмите — выберете эту кромку):",
+        "wh_krm_dup": "⚠️ «{name}» уже есть на складе — выберите кнопкой ниже.",
+        "wh_krm_bad_name": "⚠️ Напишите название цвета (например: <code>Noch koma</code>).",
+        "dg_unp_title": "⚠️ <b>Товары без цены ({count}):</b>",
+        "dg_unp_item": "{i}. {name} — {qty} {unit} ({date} | {days} дн. | Напоминаний: {r}x)",
+    },
+}
+for _lang, _texts in _V10_TEXTS.items():
+    TEXTS[_lang].update(_texts)

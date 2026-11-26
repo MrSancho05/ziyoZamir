@@ -33,11 +33,13 @@ from gspread.utils import ValueInputOption, ValueRenderOption, rowcol_to_a1
 
 from app.services.categories import merge as merge_categories
 from app.services.flows_grid import parse_cell_date
+from app.services.kromka import CATEGORY as KROMKA_CATEGORY
+from app.services.kromka import is_kromka
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL = 60.0          # soniya
+CACHE_TTL = 10.0          # soniya: Google Sheets da qo'lda qilingan o'zgarish botda ~10 s ichida ko'rinadi
 SERIAL_EPOCH = date(1899, 12, 30)       # Google Sheets sana seriya raqamining boshlanishi
 YELLOW = {"red": 1.0, "green": 0.95, "blue": 0.6}      # "Narxi keyin kiritiladi" qatorlari
 UNITS = ("шт", "кг", "м", "рулон", "упак")
@@ -53,6 +55,11 @@ RESET_MARKER = "zz_spravochnik_cleaned_v1"      # jadval darajasidagi ko'rinmas 
 
 SUPPLIER = "supplier"
 RECIPIENT = "recipient"
+# ⚖️ Qoldiqni to'g'rilash (inventarizatsiya) qatorlari: do'kon / oluvchi tavsiyalariga kirmaydi
+ADJ_IN_NOTE = "Корректировка остатка (+)"
+ADJ_OUT_NOTE = "Корректировка остатка (-)"
+ROUND_MARK = "=ROUND("
+KROMKA_MARKER = "zz_kromka_category_v1"
 
 
 # ---------------- yordamchilar ----------------
@@ -349,7 +356,7 @@ class WarehouseService:
                 if price:
                     cache.last_price[_key(name)] = price        # pastdagi qator = eng oxirgi
                 sup = str(_cell(row, c_sup)).strip()
-                if sup:
+                if sup and sup != ADJ_IN_NOTE:
                     cache.counts[SUPPLIER][sup] += 1
         except WorksheetNotFound:
             logger.warning("'%s' varag'i topilmadi", self.inflow_tab)
@@ -360,7 +367,7 @@ class WarehouseService:
             c_who = _find_col(header, "Ответственный", "ответствен")
             for row in values[h + 1:]:
                 who = str(_cell(row, c_who)).strip()
-                if who:
+                if who and who != ADJ_OUT_NOTE:
                     cache.counts[RECIPIENT][who] += 1
         except WorksheetNotFound:
             logger.warning("'%s' varag'i topilmadi", self.outflow_tab)
@@ -1035,9 +1042,79 @@ class WarehouseService:
                                   for r in rows], value_input_option=ValueInputOption.user_entered)
         return done
 
+    # ---------- summalar: butun songacha yaxlitlash (ROUND(..., 0)) ----------
+    def _round_column_sync(self, title: str, needles: Tuple[str, ...]) -> int:
+        """Ustundagi har bir formula `=ROUND(<formula>, 0)` ga o'raladi (allaqachon o'ralganlariga tegilmaydi).
+        2-qator ham o'raladi — yangi qatorlar shu namunadan ko'chirilgani uchun ular ham yaxlit bo'ladi."""
+        try:
+            ws = self._ws(title)
+        except WorksheetNotFound:
+            return 0
+        values = ws.get_all_values(value_render_option=ValueRenderOption.formula)
+        if not values:
+            return 0
+        h = _header_index(values, "Наименование товара", "наименование")
+        col = _find_col(values[h], *needles)
+        if col is None:
+            return 0
+        data = []
+        for r, row in enumerate(values[h + 1:], start=h + 2):
+            f = _cell(row, col)
+            if isinstance(f, str) and f.startswith("=") and not f.upper().startswith(ROUND_MARK):
+                data.append({"range": rowcol_to_a1(r, col + 1), "values": [[f"=ROUND({f[1:]}, 0)"]]})
+        if data:
+            ws.batch_update(data, value_input_option=ValueInputOption.user_entered)
+        return len(data)
+
+    def _round_sync(self) -> List[str]:
+        done = []
+        for title, needles in ((self.inventory_tab, ("Сумма расхода (сум)", "сумма расхода")),
+                               (self.inventory_tab, ("Сумма остатка (сум)", "сумма остатка")),
+                               (self.inventory_tab, ("Сумма прихода (сум)", "сумма прихода")),
+                               (self.outflow_tab, ("Сумма расхода (сум)", "сумма расхода"))):
+            n = self._round_column_sync(title, needles)
+            if n:
+                done.append(f"{title}: {needles[0]} ROUND ({n})")
+        return done
+
+    # ---------- 🎞 Кромка ПВХ: mavjud «Кромка ...» mahsulotlari yangi kategoriyaga (bir marta) ----------
+    def _kromka_migrate_sync(self) -> int:
+        meta = self._sheets.spreadsheet.fetch_sheet_metadata(params={"fields": "developerMetadata(metadataKey)"})
+        if any(m.get("metadataKey") == KROMKA_MARKER for m in meta.get("developerMetadata", []) or []):
+            return 0
+        ws = self._ws(self.inventory_tab)
+        values = ws.get_all_values()
+        n = 0
+        if values:
+            h = _header_index(values, "Наименование товара", "наименование")
+            cols = self._inv_cols(values[h])
+            if cols["name"] is not None and cols["category"] is not None:
+                data = []
+                for r, row in enumerate(values[h + 1:], start=h + 2):
+                    name = str(_cell(row, cols["name"])).strip()
+                    if is_kromka(name) and str(_cell(row, cols["category"])).strip() != KROMKA_CATEGORY:
+                        data.append({"range": rowcol_to_a1(r, cols["category"] + 1), "values": [[KROMKA_CATEGORY]]})
+                if data:
+                    ws.batch_update(data, value_input_option=ValueInputOption.raw)
+                n = len(data)
+        self._sheets.spreadsheet.batch_update({"requests": [{"createDeveloperMetadata": {"developerMetadata": {
+            "metadataKey": KROMKA_MARKER, "metadataValue": self.today_str(), "location": {"spreadsheet": True},
+            "visibility": "DOCUMENT"}}}]})
+        return n
+
     async def migrate_schema(self) -> List[str]:
         """Ishga tushganda: yetishmagan ustunlar jadval oxiriga qo'shiladi. Qayta chaqirish xavfsiz (idempotent)."""
         done = await self._sheets.run(self._migrate_sync)
+        try:
+            done += await self._sheets.run(self._round_sync)
+        except Exception:
+            logger.warning("Summalarni ROUND ga o'rab bo'lmadi", exc_info=True)
+        try:
+            moved = await self._sheets.run(self._kromka_migrate_sync)
+            if moved:
+                done.append(f"{self.inventory_tab}: {moved} ta kromka -> {KROMKA_CATEGORY}")
+        except Exception:
+            logger.warning("Kromka kategoriyasini yangilab bo'lmadi", exc_info=True)
         if done:
             logger.info("Jadval ustunlari yangilandi: %s", "; ".join(done))
         self.invalidate()

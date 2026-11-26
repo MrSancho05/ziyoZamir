@@ -9,6 +9,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from app.services.kromka import CATEGORY as KROMKA_CATEGORY
+from app.services.kromka import is_kromka
 from app.services.search import normalize
 
 
@@ -39,9 +41,9 @@ DEFAULT_CATEGORIES: Tuple[DefaultCategory, ...] = (
                      "гвозд", "болт", "гайк", "шайб", "винт", "шуруп", "дюбел", "евростяжк", "евровинт",
                      "конфирмат", "шпильк", "скоб", "метиз", "креп", "заклепк", "хомут", "резьб", "соединител", "анкер")),
     DefaultCategory("Клей и Химия", "🧪 Kley va Ximiya", "🧪 Клей и Химия",
-                    "kley, PVA, kromka, germetik, lak", "клей, ПВА, кромка, герметик, лак",
-                    ("kley", "pva", "akfix", "akfiks", "kromka", "germetik", "lak", "kraska", "rastvoritel",
-                     "pena", "silikon", "morilka", "клей", "пва", "акфикс", "кромк", "герметик", "лак",
+                    "kley, PVA, germetik, lak", "клей, ПВА, герметик, лак",
+                    ("kley", "pva", "akfix", "akfiks", "germetik", "lak", "kraska", "rastvoritel",
+                     "pena", "silikon", "morilka", "клей", "пва", "акфикс", "герметик", "лак",
                      "краск", "растворител", "пена", "силикон", "морилк", "химия", "разбавител", "шпатлевк", "эмульси", "затирк", "фуга", "масло", "грунт",
                      "растворит", "ральф")),
     DefaultCategory("Поролон и Обивка", "🛋 Porolon va Qoplama", "🛋 Поролон и Обивка",
@@ -60,7 +62,12 @@ DEFAULT_CATEGORIES: Tuple[DefaultCategory, ...] = (
                      "nojovka", "shurupovert", "shrupovert", "рулетк", "бит", "сверл", "свёрл", "диск", "пил", "фрез",
                      "отвертк", "отвёртк", "степлер", "молоток", "ножовк", "шуруповерт", "шруповерт", "инструмент", "перфоратор", "пистолет", "генератор",
                      "болгарк", "дрел")),
+    DefaultCategory(KROMKA_CATEGORY, "🎞 Kromka PVX", "🎞 Кромка ПВХ",
+                    "kromka 1/19, 1/35, 2/19, 2/35 (rang bo'yicha)", "кромка 1/19, 1/35, 2/19, 2/35 (по цветам)",
+                    ("kromka", "кромк")),
 )
+# yangi standart kategoriyalar (avval o'rnatilgan botlarda bir marta qo'shiladi)
+ADDED_LATER = (KROMKA_CATEGORY,)
 
 _BY_NAME: Dict[str, DefaultCategory] = {c.name.casefold(): c for c in DEFAULT_CATEGORIES}
 _KEYWORDS: List[Tuple[str, str]] = sorted(
@@ -113,6 +120,8 @@ def suggest(name: str, products: Iterable[Tuple[str, str]]) -> Optional[str]:
        uchragan kategoriyasi. Faqat birinchi so'z: "Сверло для саморезов" — bu sverlo, saморез emas;
     2) ikki tilli (kirill/lotin) kalit so'zlar lug'ati.
     `products`: (mahsulot nomi, kategoriya) juftlari."""
+    if is_kromka(name):                       # «Кромка ...» — har doim 🎞 Кромка ПВХ
+        return KROMKA_CATEGORY
     words = _words(name)
     if words:
         root = words[0][:5]

@@ -40,7 +40,7 @@ async def _lookup(message: Message, t: dict[str, str], user: User, state: FSMCon
     if len(query.replace(" ", "")) < 2 or query.startswith("/"):
         return False
     try:
-        catalog = await warehouse.catalog()
+        catalog = await warehouse.catalog(force=True)     # jadvalda qo'lda qilingan o'zgarish darhol
     except Exception:
         logger.exception("Erkin qidiruv: katalogni o'qib bo'lmadi")
         return False

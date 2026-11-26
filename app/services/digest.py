@@ -437,12 +437,14 @@ def _new_block(t: Dict[str, str], items: Sequence[Any]) -> List[str]:
 
 
 def _unpriced_block(t: Dict[str, str], items: Sequence[Any], today: date) -> List[str]:
+    """Ixcham ro'yxat: har bir mahsulot — bitta raqamlangan qator."""
     if not items:
         return []
-    lines = ["", t["dg_unp_title"]]
-    for it in items[:20]:
-        lines.append(t["dg_unp_item"].format(name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
-                                             date=it.entry_date[8:10] + "." + it.entry_date[5:7],
+    lines = ["", t["dg_unp_title"].format(count=len(items))]
+    for i, it in enumerate(items[:20], start=1):
+        day = it.entry_date
+        lines.append(t["dg_unp_item"].format(i=i, name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
+                                             date=f"{day[8:10]}.{day[5:7]}.{day[0:4]}" if len(day) >= 10 else day,
                                              days=it.days_open(today), r=it.reminder_count))
     if len(items) > 20:
         lines.append(f"… +{len(items) - 20}")
@@ -472,4 +474,4 @@ def unpriced_reminder_text(t: Dict[str, str], items: Sequence[Any], today: date,
 
 
 def unpriced_boss_text(t: Dict[str, str], items: Sequence[Any], today: date) -> str:
-    return "\n".join([t["unp_boss_head"].format(n=len(items))] + _unpriced_block(t, items, today)[1:])
+    return "\n".join([t["unp_boss_head"].format(n=len(items)), ""] + _unpriced_block(t, items, today)[2:])
