@@ -108,7 +108,7 @@ async def main() -> None:
     if settings.gemini_api_key:
         try:
             ai_agent = AIAgent(settings.gemini_api_key, settings.gemini_model, settings.timezone, warehouse=warehouse,
-                               flows=flows, shop=shop, attendance=attendance)
+                               flows=flows, shop=shop, attendance=attendance, pending=pending)
             logging.info("AI yordamchi yoqildi: %s", settings.gemini_model)
         except Exception:
             logging.exception("AI yordamchini ishga tushirib bo'lmadi (bot usiz ishlaydi)")

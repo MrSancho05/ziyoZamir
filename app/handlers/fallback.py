@@ -12,8 +12,9 @@ from aiogram.types import CallbackQuery, Message
 from app.core.permissions import Role
 from app.keyboards import warehouse as wkb
 from app.keyboards.reply import main_menu_kb
+from app.handlers.ai_confirm import confirm_kb
 from app.models import User
-from app.services.ai_agent import AgentBusy, AgentCooldown
+from app.services.ai_agent import AgentBusy, AgentCooldown, AgentDenied, ai_allowed, is_trivial
 from app.services.categories import label as cat_label
 from app.services.search import exact_match, normalize, search_products
 
@@ -130,8 +131,12 @@ async def _ask_ai(message: Message, t: dict[str, str], user: User, state: Option
                 audio = data
             else:
                 image = data
-        answer = await ai_agent.ask(user.id, user.role, t.get("lang_code", "uz"),
-                                    text=message.text or message.caption or "", audio=audio, image=image)
+        reply = await ai_agent.ask(user.id, user.role, t.get("lang_code", "uz"),
+                                   text=message.text or message.caption or "", audio=audio, image=image,
+                                   name=user.full_name)
+    except AgentDenied:
+        await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role, user.real_role))
+        return
     except AgentCooldown:
         await message.answer(t["ai_wait"])
         return
@@ -145,11 +150,13 @@ async def _ask_ai(message: Message, t: dict[str, str], user: User, state: Option
     markup = None
     query = " ".join((message.text or "").split())[:60]
     if (user.role in ACTION_ROLES and query and not _looks_like_question(query) and len(query.split()) <= 4
-            and state is not None):
+            and state is not None and not reply.drafts):
         # nom kabi qisqa matn katalogda topilmadi: AI javobi + «➕ ... ni omborga qo'shish»
         await state.update_data(lookup_q=query)
         markup = wkb.lookup_add_kb(t, query)
-    await message.answer(answer, reply_markup=markup)
+    await message.answer(reply.text, reply_markup=markup)
+    for draft in reply.drafts:                     # ✍️ yozish faqat tasdiqlangandan keyin
+        await message.answer(draft.card, reply_markup=confirm_kb(t, draft.id))
 
 
 @router.message()
@@ -164,10 +171,14 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
     if user is None:
         return
     in_flow = state is not None and await state.get_state() is not None
-    ai_on = bool(ai_agent is not None and getattr(ai_agent, "enabled", False) and not in_flow)
+    # 🤖 faqat Boss / Admin / Sklad (faol rol bo'yicha); ishchiga Gemini umuman chaqirilmaydi
+    ai_on = bool(ai_agent is not None and getattr(ai_agent, "enabled", False) and not in_flow
+                 and ai_allowed(user.role))
     if ai_on and (message.voice or message.photo):
         await _ask_ai(message, t, user, state, ai_agent)
         return
+    if ai_on and message.text and is_trivial(message.text):
+        ai_on = False                              # «+», «.», «ok», emoji — API chaqirilmaydi
     if message.text and not message.text.startswith("/"):
         if ai_on and _looks_like_question(message.text):
             await _ask_ai(message, t, user, state, ai_agent)
@@ -179,9 +190,6 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
             if res == "ai":
                 await _ask_ai(message, t, user, state, ai_agent)
                 return
-        elif ai_on:
-            await _ask_ai(message, t, user, state, ai_agent)        # ishchi: savollar (qoldiq) — AI orqali
-            return
     logger.info("Handler topilmadi: user_id=%s role=%s text=%r",
                 user.id, user.role.value if user.role else None, message.text)
     await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role, user.real_role))

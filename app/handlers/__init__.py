@@ -2,6 +2,7 @@ from aiogram import Router
 
 from app.handlers import (
     admin,
+    ai_confirm,
     attendance,
     analytics,
     deficit,
@@ -34,5 +35,6 @@ router.include_routers(
     top_products.router,
     deficit.router,
     download.router,
+    ai_confirm.router,  # 🤖 AI qoralamalari: ✅ Tasdiqlash / ❌ Bekor qilish
     fallback.router,  # doim eng oxirida
 )

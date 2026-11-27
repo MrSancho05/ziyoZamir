@@ -81,3 +81,9 @@ class RepCb(CallbackData, prefix="rp"):
 class RoleCb(CallbackData, prefix="role"):
     """Admin uchun 🎭 Rolni sinash: vaqtincha boshqa rol ko'rinishiga o'tish."""
     r: str          # boss | storekeeper | worker | admin (qaytish)
+
+
+class AiCb(CallbackData, prefix="ai"):
+    """🤖 AI qoralamasini tasdiqlash: a = ok | no, d = draft_id."""
+    a: str
+    d: str
