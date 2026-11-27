@@ -44,6 +44,8 @@ class Settings:
     unpriced_deadline_at: time
     other_expenses_tab: str
     webapp_url: str = ""
+    gemini_api_key: str = ""                        # 🤖 AI yordamchi (bo'sh bo'lsa o'chiq)
+    gemini_model: str = "gemini-2.5-flash-lite"
     webapp_host: str = "0.0.0.0"
     webapp_port: int = 8080
     page_size: int = 10
@@ -128,4 +130,7 @@ def load_settings() -> Settings:
         webapp_url=os.getenv("WEBAPP_URL", "").strip(),
         webapp_host=os.getenv("WEBAPP_HOST", "0.0.0.0").strip() or "0.0.0.0",
         webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
+        # 🤖 AI yordamchi (Google Gemini, bepul tarif). Kalit bo'lmasa — yordamchi o'chiq, bot avvalgidek ishlaydi
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip() or "gemini-2.5-flash-lite",
     )

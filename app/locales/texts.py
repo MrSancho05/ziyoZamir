@@ -1648,3 +1648,22 @@ _V10_TEXTS = {
 }
 for _lang, _texts in _V10_TEXTS.items():
     TEXTS[_lang].update(_texts)
+
+
+# ---------------- 🤖 AI yordamchi (Gemini) ----------------
+_AI_TEXTS = {
+    "uz": {
+        "ai_wait": "⏳ Bir necha soniya kuting — oldingi savolingizga javob tayyorlanmoqda.",
+        "ai_busy": "⏳ AI yordamchi hozir band (bepul tarif limiti). Bir daqiqadan keyin qayta yozing.",
+        "ai_error": "⚠️ AI yordamchi javob bera olmadi. Keyinroq urinib ko'ring yoki menyu tugmalaridan foydalaning.",
+        "ai_media_big": "⚠️ Fayl juda katta (15 MB dan ortiq). Qisqaroq ovozli xabar yoki kichikroq rasm yuboring.",
+    },
+    "ru": {
+        "ai_wait": "⏳ Подождите несколько секунд — готовлю ответ на предыдущий вопрос.",
+        "ai_busy": "⏳ AI-помощник сейчас занят (лимит бесплатного тарифа). Напишите через минуту.",
+        "ai_error": "⚠️ AI-помощник не смог ответить. Попробуйте позже или воспользуйтесь кнопками меню.",
+        "ai_media_big": "⚠️ Файл слишком большой (больше 15 МБ). Отправьте голосовое покороче или фото поменьше.",
+    },
+}
+for _lang, _texts in _AI_TEXTS.items():
+    TEXTS[_lang].update(_texts)

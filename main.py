@@ -10,6 +10,7 @@ from app.config import load_settings
 from app.handlers import router
 from app.middlewares.access import AccessMiddleware
 from app.services.access import check_admins_reachable
+from app.services.ai_agent import AIAgent
 from app.services.attendance import AttendanceService
 from app.services.flows import FlowsService
 from app.services.jobs import OpsScheduler
@@ -102,9 +103,21 @@ async def main() -> None:
     await check_admins_reachable(bot, settings.admin_ids)
 
     # repo, store, sheets, settings handlerlarga nomi bo'yicha avtomatik uzatiladi
+    # 🤖 AI yordamchi (Gemini): GEMINI_API_KEY bo'lmasa — o'chiq, bot avvalgidek ishlaydi
+    ai_agent = None
+    if settings.gemini_api_key:
+        try:
+            ai_agent = AIAgent(settings.gemini_api_key, settings.gemini_model, settings.timezone, warehouse=warehouse,
+                               flows=flows, shop=shop, attendance=attendance)
+            logging.info("AI yordamchi yoqildi: %s", settings.gemini_model)
+        except Exception:
+            logging.exception("AI yordamchini ishga tushirib bo'lmadi (bot usiz ishlaydi)")
+    else:
+        logging.info("AI yordamchi o'chiq: .env da GEMINI_API_KEY yo'q")
+
     dp = Dispatcher(repo=repo, store=store, sheets=sheets, settings=settings, attendance=attendance,
                     shop=shop, pending=pending, att_store=att_store, flows=flows,
-                    warehouse=warehouse, report_cache=report_cache)
+                    warehouse=warehouse, report_cache=report_cache, ai_agent=ai_agent)
 
     # outer_middleware: handler topilmasa ham ishlaydi, shuning uchun
     # ruxsatsiz odam hech qaysi xabar bilan o'tib keta olmaydi

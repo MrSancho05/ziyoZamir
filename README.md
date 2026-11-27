@@ -6,6 +6,9 @@
    - `BOT_TOKEN` ga yangi tokenni yozing (@BotFather orqali),
    - `ADMIN_IDS` ga administratorning Telegram ID sini yozing (@userinfobot dan bilib olinadi).
      Bir nechta admin bo'lsa vergul bilan: `111,222`.
+   - 🤖 AI yordamchi (ixtiyoriy, bepul): `GEMINI_API_KEY` — https://aistudio.google.com/apikey dan olinadi;
+     `GEMINI_MODEL` (standart `gemini-2.5-flash-lite`). Kalit bo'lmasa yordamchi o'chiq, bot avvalgidek ishlaydi.
+     Faol jarayon bo'lmaganda savol, ovozli xabar va rasmga javob beradi; ma'lumotlarni faqat o'qiydi.
 3. Buyruqlar (alohida-alohida):
 
     pip install -r requirements.txt
