@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from gspread.exceptions import WorksheetNotFound
 
+from app.services import cache_bus
 from app.locales.texts import MONTHS
 from app.services.attendance import RED, WHITE, LayoutError, TemplateMissingError, _fill
 from app.services.attendance_grid import cell_ref, months_in_range
@@ -62,11 +63,19 @@ class ShopService:
 
     async def set_day(self, day: date, amount: int, create: bool) -> None:
         await self._sheets.run(self._set_day, day, amount, create)
+        cache_bus.invalidate_all()                       # Dashboard / hisobotlar darhol yangi summa bilan
+
+    async def clear_day(self, day: date) -> int:
+        old = await self._sheets.run(self._clear_day, day)
+        cache_bus.invalidate_all()
+        return old
 
     async def adjust_day(self, day: date, delta: int) -> tuple[int, int]:
         """Kiritilgan summaga delta qo'shadi (manfiy bo'lsa ayiradi). (eski, yangi) qaytaradi.
         O'qish va yozish bitta qulf ostida bajariladi."""
-        return await self._sheets.run(self._adjust_day, day, delta)
+        res = await self._sheets.run(self._adjust_day, day, delta)
+        cache_bus.invalidate_all()
+        return res
 
     async def is_entered(self, day: date) -> bool:
         found = await self.get_day(day)
@@ -248,6 +257,24 @@ class ShopService:
         ws.update(range_name=cell_ref(row, block.amount_col), values=[[amount]])
         block.amounts[day.day] = str(amount)
         self._sync_colors(ws, block, day.year, day.month)
+
+    def _clear_day(self, day: date) -> int:
+        """Kun summasini o'chiradi; kiritilmagan kun sifatida yana sariq bo'yaladi. Eski summa qaytadi."""
+        found = self._get_block(day.year, day.month, create=False)
+        if found is None:
+            raise NoBlockError()
+        ws, _, block = found
+        row = block.day_rows.get(day.day)
+        if row is None:
+            raise LayoutError()
+        old = block_amount(block, day.day) if block.amounts.get(day.day) else None
+        if old is None:
+            raise NotEnteredError()
+        ws.update(range_name=cell_ref(row, block.amount_col), values=[[""]])
+        block.amounts.pop(day.day, None)
+        self._marks.pop((day.year, day.month), None)        # rang qayta hisoblanadi
+        self._sync_colors(ws, block, day.year, day.month)
+        return old
 
     def _adjust_day(self, day: date, delta: int) -> tuple[int, int]:
         found = self._get_block(day.year, day.month, create=False)

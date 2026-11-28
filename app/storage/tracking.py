@@ -58,6 +58,12 @@ class ProductLog:
             if _k(r["name"]) == _k(old):
                 await self._db.execute("UPDATE new_products SET name = ? WHERE id = ?", (new, r["id"]))
 
+    async def delete(self, name: str) -> None:
+        rows = await self._db.fetchall("SELECT id, name FROM new_products")
+        for r in rows:
+            if _k(r["name"]) == _k(name):
+                await self._db.execute("DELETE FROM new_products WHERE id = ?", (r["id"],))
+
     async def between(self, start: date, end: date) -> List[NewProduct]:
         rows = await self._db.fetchall(
             "SELECT * FROM new_products WHERE day >= ? AND day <= ? ORDER BY created_at",

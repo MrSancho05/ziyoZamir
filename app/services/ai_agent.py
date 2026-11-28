@@ -1,17 +1,19 @@
-"""🤖 AI yordamchi: Google Gemini (bepul tarif, standart `gemini-3.5-flash-lite`) + botning o'z funksiyalari.
+"""🤖 AI yordamchi (ovoz va matn): Google Gemini + botning o'z funksiyalari (tool calling).
 
-Kim foydalanadi: FAQAT Boss, Admin va Sklad nazoratchisi (faol rol bo'yicha — 🎭 Rolni sinash ham hisobga
-olinadi). Ishchi (worker) uchun Gemini umuman chaqirilmaydi.
+Modellar: asosiy (standart `gemini-3.5-flash`) va zaxira (standart `gemini-3.5-flash-lite`). Asosiy model 429 /
+503 / 404 qaytarsa — xuddi shu so'rov (suhbat tarixi va vositalar bilan) zaxira modelda darhol qayta yuboriladi.
+«Band» xabari faqat IKKALA model ham 429 qaytarsa.
 
-Nima qiladi:
-- faqat zavod ishi: ombor, kirim/chiqim, katalog va narxlar, do'kon va boshqa xarajatlar, davomat/maosh,
-  botdan foydalanish. Boshqa mavzular — bitta qisqa jumla bilan rad etiladi (tokenlar tejaladi);
-- o'qish vositalari rollarga `app/core/permissions.py` bo'yicha beriladi;
-- yozish (Kirim, Chiqim, yangi mahsulot, qoldiqni to'g'rilash, narx, do'kon / boshqa xarajat) — FAQAT Admin va
-  Sklad nazoratchisi uchun va FAQAT qoralama (draft): model hech narsani o'zi yozmaydi, foydalanuvchi
-  «✅ Tasdiqlash» ni bosgandan keyin `app/handlers/ai_confirm.py` botning mavjud yozish funksiyalarini chaqiradi.
-Tejash: max_output_tokens=450, qisqa suhbat xotirasi (4 ta xabar, 10 daqiqadan keyin o'chadi), bo'sh / 1–2
-belgili xabarlarga API chaqirilmaydi. Python 3.9+ bilan mos (google-genai>=1.0.0)."""
+Kim foydalanadi: Boss, Admin, Sklad nazoratchisi va Usta (faol rol bo'yicha, 🎭 Rolni sinash ham). Ishchi —
+Gemini umuman chaqirilmaydi.
+- Usta: qoldiq va tanqislar (narxsiz), 📤 Chiqim qoralamasi.
+- Boss: faqat o'qish va tahlil.
+- Admin / Sklad: o'qish + barcha yozish / tahrirlash / o'chirish — FAQAT qoralama orqali: foydalanuvchi
+  «✅ Tasdiqlash» ni bosgandan keyin `app/handlers/ai_confirm.py` botning yozish funksiyalarini chaqiradi.
+- Til almashtirish (`change_language`) — tasdiqlashsiz, darhol.
+Bir xabarda bir nechta amal (zanjir): 6 tagacha vosita bosqichi. Faqat zavod ishi (boshqa mavzular — 1 jumla
+bilan rad). Tejash: max_output_tokens=450, 4 ta xabarlik xotira (10 daqiqa), 1–2 belgili xabarlarga API yo'q.
+Python 3.9+ bilan mos (google-genai>=1.0.0)."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +21,6 @@ import html
 import json
 import logging
 import re
-import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -31,28 +32,33 @@ from app.locales.texts import get_texts
 from app.services import kromka
 from app.services.categories import label as cat_label
 from app.services.categories import suggest as suggest_category
+from app.services.drafts import DRAFT_TTL, DRAFTS, Draft, DraftStore  # noqa: F401  (Draft — tashqi importlar uchun)
 from app.services.search import exact_match, normalize, search_products
 from app.services.shop_grid import parse_shop_amount
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 5               # bitta savolda vosita chaqiruvlari soni
+MAX_ROUNDS = 6               # bitta xabarda zanjir vosita bosqichlari
 COOLDOWN = 3.0               # soniya: bitta foydalanuvchi so'rovlari orasida
 HISTORY_TURNS = 4            # suhbat xotirasi: oxirgi 4 ta xabar (2 savol + 2 javob)
 HISTORY_TTL = 600.0          # 10 daqiqa jim turilsa xotira o'chadi
-DRAFT_TTL = 600.0            # tasdiqlanmagan qoralama 10 daqiqada eskiradi
-MAX_DRAFTS_PER_ASK = 5
+MAX_DRAFTS_PER_ASK = 6
 MAX_OUTPUT_TOKENS = 450
 TEMPERATURE = 0.2            # faqat 1.x / 2.x modellarga: Gemini 3+ da temperature eskirgan (e'tiborsiz)
+PRIMARY_SKIP = 60.0          # asosiy model 429 bersa — shuncha soniya to'g'ridan-to'g'ri zaxiraga
+FALLBACK_CODES = (429, 503, 404)
 MAX_ANSWER = 3800
 MAX_RANGE_DAYS = 366
 
-AI_ROLES = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER)
+AI_ROLES = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER, Role.MASTER)
+EXEC_ROLES = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER)            # pul, narx, tahlil
 WRITE_ROLES = (Role.ADMIN, Role.STOREKEEPER)
+OUTFLOW_ROLES = WRITE_ROLES + (Role.MASTER,)
+PRICE_ROLES = EXEC_ROLES
 
 
 class AgentBusy(Exception):
-    """Bepul tarif limiti (429) yoki band."""
+    """Ikkala model ham limitda (429)."""
 
 
 class AgentCooldown(Exception):
@@ -110,16 +116,29 @@ def _money(value: Any) -> Optional[int]:
     return parse_shop_amount(raw)
 
 
-def _parse_day(value: Any, default: date) -> date:
-    try:
-        return date.fromisoformat(str(value)[:10])
-    except (TypeError, ValueError):
+def _parse_day(value: Any, default: Optional[date]) -> Optional[date]:
+    s = str(value or "").strip()
+    if not s:
         return default
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        pass
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            pass
+    return default
 
 
 def _clean(value: Any, limit: int = 120) -> str:
     s = re.sub(r"\s+", " ", str(value or "")).strip().lstrip("=+@").strip()
     return s[:limit]
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
 
 
 def to_telegram_html(text: str) -> str:
@@ -137,45 +156,6 @@ def to_telegram_html(text: str) -> str:
     return s
 
 
-# ---------------- qoralamalar (tasdiqlash kerak bo'lgan yozuvlar) ----------------
-@dataclass
-class Draft:
-    id: str
-    user_id: int
-    kind: str                       # inflow | outflow | product | adjust | price | shop | other
-    payload: Dict[str, Any]
-    card: str                       # foydalanuvchiga ko'rsatiladigan HTML karta
-    created: float = field(default_factory=time.monotonic)
-
-    @property
-    def expired(self) -> bool:
-        return time.monotonic() - self.created > DRAFT_TTL
-
-
-class DraftStore:
-    def __init__(self) -> None:
-        self._items: Dict[str, Draft] = {}
-
-    def _cleanup(self) -> None:
-        for k in [k for k, d in self._items.items() if d.expired]:
-            self._items.pop(k, None)
-
-    def add(self, user_id: int, kind: str, payload: Dict[str, Any], card: str) -> Draft:
-        self._cleanup()
-        draft = Draft(secrets.token_hex(5), user_id, kind, payload, card)
-        self._items[draft.id] = draft
-        return draft
-
-    def get(self, draft_id: str) -> Optional[Draft]:
-        self._cleanup()
-        return self._items.get(draft_id)
-
-    def take(self, draft_id: str) -> Optional[Draft]:
-        """Bir marta: ikkinchi bosishda None (ikki marta yozilmaydi)."""
-        self._cleanup()
-        return self._items.pop(draft_id, None)
-
-
 # ---------------- vositalar ----------------
 @dataclass
 class Ctx:
@@ -184,6 +164,7 @@ class Ctx:
     lang: str
     name: str = ""
     drafts: List[Draft] = field(default_factory=list)
+    new_lang: Optional[str] = None
 
 
 @dataclass
@@ -201,18 +182,26 @@ def _perm(*perms: Permission) -> Callable[[Optional[Role]], bool]:
     return lambda role: ai_allowed(role) and any(has_permission(role, p) for p in perms)
 
 
-def _staff(role: Optional[Role]) -> bool:
-    return ai_allowed(role)
+def _roles(*roles: Role) -> Callable[[Optional[Role]], bool]:
+    return lambda role: role in roles
 
 
 def _writer(perm: Permission) -> Callable[[Optional[Role]], bool]:
     return lambda role: role in WRITE_ROLES and has_permission(role, perm)
 
 
+@dataclass
+class AgentReply:
+    text: str
+    drafts: List[Draft] = field(default_factory=list)
+    new_lang: Optional[str] = None
+
+
 class AIAgent:
     def __init__(self, api_key: str, model: str, tz, warehouse=None, flows=None, shop=None, attendance=None,
-                 pending=None, client: Any = None) -> None:
-        self.model = model
+                 pending=None, client: Any = None, fallback_model: Optional[str] = None) -> None:
+        self.model = model                                  # asosiy model
+        self.fallback_model = fallback_model if fallback_model and fallback_model != model else None
         self._tz = tz
         self._wh, self._flows, self._shop, self._att, self._pending = warehouse, flows, shop, attendance, pending
         self._client = client
@@ -222,7 +211,8 @@ class AIAgent:
         self._sem = asyncio.Semaphore(2)
         self._last: Dict[int, float] = {}
         self._history: Dict[int, Tuple[float, Deque[Any]]] = {}
-        self.drafts = DraftStore()
+        self._primary_down_until = 0.0
+        self.drafts = DRAFTS
         self._tools: Dict[str, Tool] = {t.name: t for t in self._build_tools()}
 
     @property
@@ -239,23 +229,30 @@ class AIAgent:
         S, N = "string", "number"
         period = {"start_date": {"type": S, "description": "Boshlanish sanasi, YYYY-MM-DD"},
                   "end_date": {"type": S, "description": "Tugash sanasi, YYYY-MM-DD (kiritilmasa — bugun)"}}
-        product = {"type": S, "description": "Mahsulot nomi (taxminiy bo'lishi mumkin)"}
+        product = {"type": S, "description": "Mahsulot nomi (taxminiy, kirill/lotin bo'lishi mumkin)"}
         day = {"type": S, "description": "Sana YYYY-MM-DD (kiritilmasa — bugun)"}
-        read_wh = _perm(Permission.VIEW_DEFICIT)
+        kind = {"type": S, "description": "inflow (Приход) | outflow (Расход) | other (Прочие расходы) | shop (Магазин)"}
+        read_stock = _perm(Permission.VIEW_DEFICIT)
+        execs = _roles(*EXEC_ROLES)
         return [
+            # ---- hamma AI rollari ----
+            Tool("change_language", "Foydalanuvchi tilini darhol almashtirish (tasdiqlashsiz).",
+                 {"language": {"type": S, "description": "uz yoki ru"}}, ["language"], ai_allowed, self._t_lang),
             # ---- o'qish ----
             Tool("search_products", "Ombordagi mahsulotni nomi bo'yicha qidirish: qoldiq, birlik, kategoriya, "
-                 "Мин. остаток, tanqisligi, o'rtacha narx.", {"query": {"type": S, "description": "Nom yoki qismi"}},
-                 ["query"], read_wh, self._t_search),
-            Tool("low_stock_products", "Tanqis mahsulotlar (qoldiq ≤ Мин. остаток).", {}, [], read_wh, self._t_low),
+                 "Мин. остаток, tanqisligi (ruxsat bo'lsa narx).", {"query": {"type": S, "description": "Nom"}},
+                 ["query"], read_stock, self._t_search),
+            Tool("low_stock_products", "Tanqis mahsulotlar (qoldiq ≤ Мин. остаток).", {}, [], read_stock, self._t_low),
             Tool("products_in_category", "Kategoriya mahsulotlari va qoldiqlari; kategoriya bo'sh bo'lsa — "
-                 "kategoriyalar ro'yxati.", {"category": {"type": S, "description": "Kategoriya"}}, [], read_wh,
+                 "kategoriyalar ro'yxati.", {"category": {"type": S, "description": "Kategoriya"}}, [], read_stock,
                  self._t_category),
             Tool("stock_value", "Ombordagi jami tovar qiymati va kategoriyalar bo'yicha qiymat (so'm).", {}, [],
-                 _staff, self._t_value),
-            Tool("unpriced_inflows", "«Приход» dagi narxi kiritilmagan kirimlar.", {}, [], _staff, self._t_unpriced),
+                 execs, self._t_value),
+            Tool("unpriced_inflows", "«Приход» dagi narxi kiritilmagan kirimlar.", {}, [], execs, self._t_unpriced),
+            Tool("new_products_log", "🆕 Davrda yangi qo'shilgan mahsulotlar (kim, qachon, kategoriya).", period,
+                 ["start_date"], execs, self._t_new),
             Tool("warehouse_movements", "Davr bo'yicha kirim (Приход) va chiqim (Расход): soni, summasi, eng katta "
-                 "mahsulotlar; bugungi qatorlar ham.", period, ["start_date"], _staff, self._t_flows),
+                 "mahsulotlar; bugungi qatorlar ham.", period, ["start_date"], execs, self._t_flows),
             Tool("shop_expenses", "🏪 Do'kon xarajati davr bo'yicha: jami, kunlar, summa kiritilmagan kunlar.",
                  period, ["start_date"], _perm(Permission.VIEW_EXPENSES, Permission.MARK_EXPENSES), self._t_shop),
             Tool("other_expenses", "🧾 Boshqa xarajatlar (Прочие расходы) davr bo'yicha: jami, kategoriyalar.",
@@ -266,20 +263,45 @@ class AIAgent:
             Tool("payroll_summary", "Oy bo'yicha maosh hisobi (davomat asosida): oylik, ushlanma, to'lanadigan.",
                  {"year": {"type": N, "description": "Yil"}, "month": {"type": N, "description": "Oy (1-12)"}},
                  [], _perm(Permission.VIEW_ATTENDANCE), self._t_payroll),
+            Tool("find_entries", "Tahrirlash / o'chirish uchun yozuvlarni topish: mahsulot va sana bo'yicha "
+                 "(sana bo'lmasa — bugungilar, bo'lmasa oxirgilar). Natijadagi `row` raqami draft_edit_entry / "
+                 "draft_delete_entry uchun kerak. shop uchun sana kerak.",
+                 {"kind": kind, "product": {"type": S, "description": "Mahsulot yoki izoh (ixtiyoriy)"}, "date": day},
+                 ["kind"], _roles(*WRITE_ROLES), self._t_find),
             # ---- yozish: faqat qoralama, foydalanuvchi ✅ bosadi ----
-            Tool("draft_inflow", "📥 Kirim (Приход) qoralamasi. Miqdor dona/birlikda yoki karobkada "
-                 "(unit_mode=box). Narx noma'lum bo'lsa — 0 (narxi keyin kiritiladi).",
+            Tool("draft_inflow", "📥 Kirim (Приход) qoralamasi (har bir mahsulot uchun alohida chaqiring). Miqdor "
+                 "dona/birlikda yoki karobkada (unit_mode=box). Narx aytilmasa — oxirgi narx olinadi; «narxsiz» "
+                 "deyilsa — 0.",
                  {"product": product, "quantity": {"type": N, "description": "Miqdor"},
                   "unit_mode": {"type": S, "description": "unit (dona/birlik) yoki box (karobka)"},
-                  "price_per_unit": {"type": N, "description": "1 birlik narxi, so'm (0 — keyin)"},
+                  "price_per_unit": {"type": N, "description": "1 birlik narxi, so'm (0 — narxi keyin)"},
                   "price_per_box": {"type": N, "description": "1 karobka narxi, so'm (ixtiyoriy)"},
                   "supplier": {"type": S, "description": "Do'kon / yetkazib beruvchi"}},
                  ["product", "quantity", "supplier"], _writer(Permission.MANAGE_WAREHOUSE), self._w_inflow, True),
-            Tool("draft_outflow", "📤 Chiqim (Расход) qoralamasi: qoldiq tekshiriladi.",
+            Tool("draft_outflow", "📤 Chiqim (Расход) qoralamasi: qoldiq tekshiriladi (har bir mahsulot uchun "
+                 "alohida chaqiring).",
                  {"product": product, "quantity": {"type": N, "description": "Miqdor (birlikda)"},
                   "recipient": {"type": S, "description": "Oluvchi usta (Ответственный)"},
                   "purpose": {"type": S, "description": "Buyurtma / sex / izoh (ixtiyoriy)"}},
-                 ["product", "quantity", "recipient"], _writer(Permission.MANAGE_WAREHOUSE), self._w_outflow, True),
+                 ["product", "quantity", "recipient"], _roles(*OUTFLOW_ROLES), self._w_outflow, True),
+            Tool("draft_edit_entry", "✏️ Bugungi yoki o'tgan kundagi yozuvni tahrirlash (avval find_entries). "
+                 "inflow: quantity, price_per_unit, party (do'kon), date; outflow: quantity, party (oluvchi), purpose, "
+                 "date; other: amount, category, description, date. Do'kon (shop) uchun draft_shop_expense.",
+                 {"kind": kind, "row": {"type": N, "description": "find_entries dagi row"},
+                  "quantity": {"type": N, "description": "Yangi miqdor"},
+                  "price_per_unit": {"type": N, "description": "Yangi narx (0 — narxsiz)"},
+                  "party": {"type": S, "description": "Yangi do'kon / oluvchi"},
+                  "purpose": {"type": S, "description": "Yangi izoh (chiqim)"},
+                  "new_date": {"type": S, "description": "Yangi sana YYYY-MM-DD"},
+                  "amount": {"type": S, "description": "Yangi summa (other)"},
+                  "category": {"type": S, "description": "Yangi kategoriya (other)"},
+                  "description": {"type": S, "description": "Yangi izoh (other)"}},
+                 ["kind", "row"], _writer(Permission.MANAGE_WAREHOUSE), self._w_edit, True),
+            Tool("draft_delete_entry", "🗑 Yozuvni butunlay o'chirish (avval find_entries). inflow / outflow / "
+                 "other — row bilan; shop — date bilan (kun summasi o'chiriladi).",
+                 {"kind": kind, "row": {"type": N, "description": "find_entries dagi row"}, "date": day,
+                  "reason": {"type": S, "description": "Sabab (Bossga yuborilgan do'kon kuni uchun majburiy)"}},
+                 ["kind"], _writer(Permission.MANAGE_WAREHOUSE), self._w_delete, True),
             Tool("draft_new_product", "➕ Yangi mahsulot qoralamasi. Kategoriya standartlardan (Фурнитура, "
                  "Крепеж / Метизы, Клей и Химия, Поролон и Обивка, Расходники, Инструменты, Кромка ПВХ); "
                  "Мин. остаток > 0 majburiy.",
@@ -289,6 +311,11 @@ class AIAgent:
                   "min_stock": {"type": N, "description": "Мин. остаток (> 0)"},
                   "pack": {"type": N, "description": "1 karobkadagi dona (ixtiyoriy, standart 1)"}},
                  ["name", "unit", "min_stock"], _writer(Permission.MANAGE_WAREHOUSE), self._w_product, True),
+            Tool("draft_rename_product", "✏️ Mahsulot nomini barcha varaqlarda o'zgartirish.",
+                 {"product": product, "new_name": {"type": S, "description": "Yangi nom"}}, ["product", "new_name"],
+                 _writer(Permission.MANAGE_WAREHOUSE), self._w_rename, True),
+            Tool("draft_delete_product", "🗑 Mahsulotni katalogdan (Остатки и Расходы va Справочник) o'chirish.",
+                 {"product": product}, ["product"], _writer(Permission.MANAGE_WAREHOUSE), self._w_del_product, True),
             Tool("draft_stock_adjustment", "⚖️ Qoldiqni to'g'rilash qoralamasi: +N qo'shadi, -N ayiradi.",
                  {"product": product, "delta": {"type": N, "description": "+N yoki -N"}},
                  ["product", "delta"], _writer(Permission.MANAGE_WAREHOUSE), self._w_adjust, True),
@@ -296,9 +323,10 @@ class AIAgent:
                  {"product": product, "price_per_unit": {"type": N, "description": "1 birlik narxi, so'm"},
                   "date": {"type": S, "description": "Kirim sanasi YYYY-MM-DD (bir nechta bo'lsa)"}},
                  ["product", "price_per_unit"], _writer(Permission.MANAGE_WAREHOUSE), self._w_price, True),
-            Tool("draft_shop_expense", "🏪 Kunlik do'kon xarajati qoralamasi (kun summasi yangilanadi). Qisqa yozuv: "
-                 "450 = 450 000 so'm.", {"amount": {"type": S, "description": "Summa, foydalanuvchi yozganidek"},
-                                        "date": day},
+            Tool("draft_shop_expense", "🏪 Kunlik do'kon xarajati (yangi yoki o'zgartirish; kun summasi "
+                 "almashtiriladi). Qisqa yozuv: 450 = 450 000. Bossga yuborilgan kun uchun sabab (reason) majburiy.",
+                 {"amount": {"type": S, "description": "Summa, foydalanuvchi yozganidek"}, "date": day,
+                  "reason": {"type": S, "description": "Tuzatish sababi (Bossga yuborilgan kun uchun)"}},
                  ["amount"], _writer(Permission.MARK_EXPENSES), self._w_shop, True),
             Tool("draft_other_expense", "🧾 Boshqa xarajat (Прочие расходы) qoralamasi. Kategoriyalar: Топливо / "
                  "Бензин, Офис / Помещение, Транспорт / Грузы, Ремонт, Прочее. Qisqa yozuv: 450 = 450 000.",
@@ -306,6 +334,11 @@ class AIAgent:
                   "category": {"type": S, "description": "Kategoriya"},
                   "description": {"type": S, "description": "Nima uchun"}, "date": day},
                  ["amount", "description"], _writer(Permission.MANAGE_WAREHOUSE), self._w_other, True),
+            Tool("draft_directory", "👷 Usta yoki 📏 o'lchov birligini Справочник ga qo'shish / o'chirish.",
+                 {"kind": {"type": S, "description": "master yoki unit"},
+                  "action": {"type": S, "description": "add yoki delete"},
+                  "value": {"type": S, "description": "Nomi"}}, ["kind", "action", "value"],
+                 _writer(Permission.MANAGE_WAREHOUSE), self._w_directory, True),
         ]
 
     def tools_for(self, role: Optional[Role]) -> List[Tool]:
@@ -313,8 +346,8 @@ class AIAgent:
 
     def _period(self, args: Dict[str, Any]):
         today = self.today()
-        end = _parse_day(args.get("end_date"), today)
-        start = _parse_day(args.get("start_date"), end)
+        end = _parse_day(args.get("end_date"), today) or today
+        start = _parse_day(args.get("start_date"), end) or end
         if start > end:
             start, end = end, start
         if (end - start).days > MAX_RANGE_DAYS:
@@ -322,10 +355,13 @@ class AIAgent:
         return start, end
 
     @staticmethod
-    def _product_row(p) -> Dict[str, Any]:
-        return {"name": p.name, "category": p.category, "unit": p.unit, "stock": _r(p.stock),
-                "min_norm": _r(p.min_stock), "low": bool(p.is_low), "pack": _r(p.pack),
-                "avg_price_sum": _r(p.avg_price), "stock_value_sum": _r(p.value or p.stock * p.avg_price)}
+    def _product_row(p, role: Optional[Role] = None) -> Dict[str, Any]:
+        row = {"name": p.name, "category": p.category, "unit": p.unit, "stock": _r(p.stock),
+               "min_norm": _r(p.min_stock), "low": bool(p.is_low), "pack": _r(p.pack)}
+        if role in PRICE_ROLES:                       # 👷 ustaga narx va pul ko'rsatilmaydi
+            row["avg_price_sum"] = _r(p.avg_price)
+            row["stock_value_sum"] = _r(p.value or p.stock * p.avg_price)
+        return row
 
     async def _resolve(self, query: str):
         """(Product | None, nomzodlar). Aniq / qism-so'z / o'xshash; bir nechta bo'lsa — nomzodlar."""
@@ -342,6 +378,16 @@ class AIAgent:
             return by[hits[0]], []
         return None, hits[:6]
 
+    # ---- til ----
+    async def _t_lang(self, ctx: Ctx, language: str = "") -> Any:
+        code = str(language or "").strip().lower()[:2]
+        code = {"ру": "ru", "uz": "uz", "ru": "ru", "o'": "uz", "ўз": "uz", "уз": "uz"}.get(code, code)
+        if code not in ("uz", "ru"):
+            return {"error": "language must be uz or ru"}
+        ctx.new_lang = code
+        return {"status": "language_changed", "language": code,
+                "note": "Reply with one short confirmation sentence in the NEW language."}
+
     # ---- o'qish ----
     async def _t_search(self, ctx: Ctx, query: str = "") -> Any:
         catalog = await self._wh.catalog()
@@ -349,11 +395,11 @@ class AIAgent:
         q = normalize(query).replace(" ", "")
         hits = [n for n in names if q and q in normalize(n).replace(" ", "")][:10] or search_products(query, names, 5)
         by = {p.name: p for p in catalog}
-        return {"matches": [self._product_row(by[n]) for n in hits if n in by]}
+        return {"matches": [self._product_row(by[n], ctx.role) for n in hits if n in by]}
 
     async def _t_low(self, ctx: Ctx) -> Any:
         low = sorted(await self._wh.low_items(), key=lambda p: p.stock / (p.min_stock or 1))
-        return {"count": len(low), "items": [self._product_row(p) for p in low[:40]]}
+        return {"count": len(low), "items": [self._product_row(p, ctx.role) for p in low[:40]]}
 
     async def _t_category(self, ctx: Ctx, category: str = "") -> Any:
         catalog = await self._wh.catalog()
@@ -364,7 +410,8 @@ class AIAgent:
             return {"categories": counts, "products_total": len(catalog)}
         k = normalize(category)
         items = [p for p in catalog if k and k in normalize(p.category or "")]
-        return {"category": category, "count": len(items), "items": [self._product_row(p) for p in items[:60]]}
+        return {"category": category, "count": len(items),
+                "items": [self._product_row(p, ctx.role) for p in items[:60]]}
 
     async def _t_value(self, ctx: Ctx) -> Any:
         by: Dict[str, float] = {}
@@ -377,6 +424,16 @@ class AIAgent:
         return {"count": len(rows), "items": [{"date": r.day.isoformat() if r.day else "", "name": r.name,
                                                "qty": _r(r.qty), "unit": r.unit, "supplier": r.supplier}
                                               for r in rows[:40]]}
+
+    async def _t_new(self, ctx: Ctx, **args) -> Any:
+        log = getattr(self._wh, "product_log", None)
+        if log is None:
+            return {"error": "not configured"}
+        start, end = self._period(args)
+        items = await log.between(start, end)
+        return {"period": [start.isoformat(), end.isoformat()], "count": len(items),
+                "items": [{"date": i.day, "name": i.name, "category": i.category, "unit": i.unit,
+                           "min": _r(i.min_stock), "by": i.user_name} for i in items[:40]]}
 
     async def _t_flows(self, ctx: Ctx, **args) -> Any:
         start, end = self._period(args)
@@ -444,6 +501,53 @@ class AIAgent:
             out["total_payable"] = sum(p.payable or 0 for p in rep.pays)
         return out
 
+    @staticmethod
+    def _entry_json(e) -> Dict[str, Any]:
+        out = {"row": e.row, "date": e.day.isoformat() if e.day else "", "name": e.name, "qty": _r(e.qty),
+               "party": e.party}
+        if e.kind == "in":
+            out.update(unit=e.unit, price=_r(e.price) if e.price else 0)
+        else:
+            out.update(purpose=e.purpose)
+        return out
+
+    async def _entries(self, kind: str, product: str = "", day: Optional[date] = None, limit: int = 10):
+        entries = await self._wh.flow_entries("in" if kind == "inflow" else "out", product, day, limit=60)
+        if day is None:                                      # sana aytilmagan: avval bugungilar
+            today = [e for e in entries if e.day == self.today()]
+            entries = today or entries
+        return entries[:limit]
+
+    async def _other_rows(self, text: str = "", day: Optional[date] = None):
+        other = getattr(self._wh, "other", None)
+        if other is None:
+            return []
+        rows = await other.rows(force=True)
+        if day is not None:
+            rows = [r for r in rows if r.day == day]
+        if text:
+            q = normalize(text)
+            rows = [r for r in rows if q and (q in normalize(r.description) or q in normalize(r.category))] or rows
+        return sorted(rows, key=lambda r: (r.day, r.row), reverse=True)
+
+    async def _t_find(self, ctx: Ctx, kind: str = "", product: str = "", date: str = "") -> Any:
+        day = _parse_day(date, None)
+        kind = (kind or "").strip().lower()
+        if kind in ("inflow", "outflow"):
+            entries = await self._entries(kind, product, day)
+            return {"kind": kind, "count": len(entries), "entries": [self._entry_json(e) for e in entries]}
+        if kind == "other":
+            rows = (await self._other_rows(product, day))[:10]
+            return {"kind": kind, "entries": [{"row": r.row, "date": r.day.isoformat(), "category": r.category,
+                                               "description": r.description, "amount": _r(r.amount)} for r in rows]}
+        if kind == "shop":
+            d = day or self.today()
+            found = await self._shop.get_day(d)
+            amount = found[1] if found and found[0] else None
+            sent = bool(self._pending and await self._pending.is_sent("shop", d.isoformat()) is True)
+            return {"kind": kind, "date": d.isoformat(), "amount": amount, "sent_to_boss": sent}
+        return {"error": "kind must be inflow | outflow | other | shop"}
+
     # ---- yozish: qoralamalar ----
     def _draft(self, ctx: Ctx, kind: str, payload: Dict[str, Any], card: str) -> Dict[str, Any]:
         if len(ctx.drafts) >= MAX_DRAFTS_PER_ASK:
@@ -474,20 +578,28 @@ class AIAgent:
         price = _num(price_per_unit)
         box_price = _num(price_per_box)
         if box_price and box_price > 0:
-            price = box_price / (p.pack if box or p.pack > 1 else 1)
+            price = box_price / (p.pack if p.pack > 1 else 1)
+        last_used = False
+        if price is None and box_price is None:              # narx aytilmadi: oxirgi narx
+            last = await self._wh.last_price(p.name)
+            if last:
+                price, last_used = last, True
         price = price if price and price > 0 else None
         supplier = _clean(supplier, 60)
         if not supplier:
             from app.services.warehouse import SUPPLIER
             return {"error": "supplier required", "known_suppliers": await self._wh.top_names(SUPPLIER, 8)}
         boxes = f" ({_n(q)} {t['wh_unit_box']} × {_n(p.pack)})" if box else ""
-        card = t["ai_d_inflow"].format(
-            name=html.escape(p.name), qty=_n(qty), unit=html.escape(p.unit), boxes=boxes,
-            price=(f"{_n(price)} so'm · jami {_n(price * qty)}" if ctx.lang != "ru" else
-                   f"{_n(price)} сум · итого {_n(price * qty)}") if price else t["wh_price_later_mark"],
-            supplier=html.escape(supplier))
-        return self._draft(ctx, "inflow", {"name": p.name, "unit": p.unit, "qty": qty, "price": price,
-                                           "supplier": supplier, "boxes": q if box else 0.0, "pack": p.pack}, card)
+        cur = "сум" if ctx.lang == "ru" else "so'm"
+        price_text = (f"{_n(price)} {cur} · {'итого' if ctx.lang == 'ru' else 'jami'} {_n(price * qty)}"
+                      + (" (🔁)" if last_used else "")) if price else t["wh_price_later_mark"]
+        card = t["ai_d_inflow"].format(name=html.escape(p.name), qty=_n(qty), unit=html.escape(p.unit), boxes=boxes,
+                                       price=price_text, supplier=html.escape(supplier))
+        res = self._draft(ctx, "inflow", {"name": p.name, "unit": p.unit, "qty": qty, "price": price,
+                                          "supplier": supplier, "boxes": q if box else 0.0, "pack": p.pack}, card)
+        if last_used:
+            res["price_used"] = {"last_price": _r(price)}
+        return res
 
     async def _w_outflow(self, ctx: Ctx, product: str = "", quantity: Any = None, recipient: str = "",
                          purpose: str = "") -> Any:
@@ -498,18 +610,150 @@ class AIAgent:
         qty = _num(quantity)
         if not qty or qty <= 0:
             return {"error": "quantity must be > 0"}
-        if qty > p.stock + 1e-9:
-            return {"error": "insufficient_stock", "stock": _r(p.stock), "unit": p.unit}
+        reserved = sum(float(d.payload.get("qty") or 0) for d in ctx.drafts
+                       if d.kind == "outflow" and d.payload.get("name") == p.name)
+        available = p.stock - reserved
+        if qty > available + 1e-9:
+            return {"error": "insufficient_stock", "stock": _r(available), "unit": p.unit}
         recipient = _clean(recipient, 60)
         if not recipient:
             from app.services.warehouse import RECIPIENT
             return {"error": "recipient required", "known_recipients": await self._wh.top_names(RECIPIENT, 8)}
         purpose = _clean(purpose, 100)
         card = t["ai_d_outflow"].format(name=html.escape(p.name), qty=_n(qty), unit=html.escape(p.unit),
-                                        stock=_n(p.stock), after=_n(p.stock - qty), who=html.escape(recipient),
+                                        stock=_n(available), after=_n(available - qty), who=html.escape(recipient),
                                         purpose=html.escape(purpose) or "—")
         return self._draft(ctx, "outflow", {"name": p.name, "unit": p.unit, "qty": qty, "recipient": recipient,
                                             "purpose": purpose}, card)
+
+    async def _find_entry(self, kind: str, row: Any):
+        r = int(_num(row) or 0)
+        entries = await self._wh.flow_entries("in" if kind == "inflow" else "out", "", None, limit=100000)
+        return next((e for e in entries if e.row == r), None)
+
+    async def _w_edit(self, ctx: Ctx, kind: str = "", row: Any = None, quantity: Any = None,
+                      price_per_unit: Any = None, party: str = "", purpose: str = "", new_date: str = "",
+                      amount: Any = None, category: str = "", description: str = "") -> Any:
+        t = get_texts(ctx.lang)
+        kind = (kind or "").strip().lower()
+        changes: List[str] = []
+        fields: Dict[str, Any] = {}
+        nd = _parse_day(new_date, None)
+        if nd and nd > self.today():
+            return {"error": "future date"}
+        if kind in ("inflow", "outflow"):
+            e = await self._find_entry(kind, row)
+            if e is None:
+                return {"error": "row not found — call find_entries again"}
+            q = _num(quantity)
+            if q is not None:
+                if q <= 0:
+                    return {"error": "quantity must be > 0 (to remove the row use draft_delete_entry)"}
+                if kind == "outflow" and q > e.qty:
+                    p = await self._wh.product(e.name, force=True)
+                    if p is not None and q - e.qty > p.stock + 1e-9:
+                        return {"error": "insufficient_stock", "stock": _r(p.stock)}
+                fields["qty"] = q
+                changes.append(t["ai_ch_qty"].format(old=_n(e.qty), new=_n(q)))
+            if kind == "inflow" and price_per_unit is not None and _num(price_per_unit) is not None:
+                pr = _num(price_per_unit) or None
+                fields["price"] = pr
+                changes.append(t["ai_ch_price"].format(old=_n(e.price) if e.price else "—",
+                                                       new=_n(pr) if pr else t["wh_price_later_mark"]))
+            if party:
+                fields["party"] = _clean(party, 60)
+                changes.append(t["ai_ch_party"].format(old=html.escape(e.party or "—"), new=html.escape(fields["party"])))
+            if kind == "outflow" and purpose:
+                fields["purpose"] = _clean(purpose, 100)
+                changes.append(t["ai_ch_purpose"].format(old=html.escape(e.purpose or "—"),
+                                                         new=html.escape(fields["purpose"])))
+            if nd:
+                fields["iso"] = nd.isoformat()
+                changes.append(t["ai_ch_date"].format(old=e.day.strftime("%d.%m.%Y") if e.day else "—",
+                                                      new=nd.strftime("%d.%m.%Y")))
+            if not fields:
+                return {"error": "nothing to change"}
+            card = t["ai_d_edit_in" if kind == "inflow" else "ai_d_edit_out"].format(
+                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=html.escape(e.name),
+                changes="\n".join(changes))
+            return self._draft(ctx, "edit_in" if kind == "inflow" else "edit_out",
+                               {"expect": e.expect(), "fields": fields, "name": e.name}, card)
+        if kind == "other":
+            from app.services.other_expenses import DEFAULT_CATEGORIES as OTHER
+            rows = await self._other_rows()
+            r = next((x for x in rows if x.row == int(_num(row) or 0)), None)
+            if r is None:
+                return {"error": "row not found — call find_entries again"}
+            if amount is not None and str(amount).strip():
+                v = _money(amount)
+                if not v or v <= 0:
+                    return {"error": "amount not understood"}
+                fields["amount"] = v
+                changes.append(t["ai_ch_amount"].format(old=_n(r.amount), new=_n(v)))
+            if category:
+                k = normalize(category)
+                cat = next((c for c, uz, ru in OTHER if k and (k in normalize(c) or k in normalize(uz)
+                                                               or k in normalize(ru))), None)
+                if cat is None:
+                    return {"error": "unknown category", "categories": [c for c, _u, _r2 in OTHER]}
+                fields["category"] = cat
+                changes.append(t["ai_ch_category"].format(old=html.escape(r.category), new=html.escape(cat)))
+            if description:
+                fields["description"] = _clean(description, 200)
+                changes.append(t["ai_ch_desc"].format(old=html.escape(r.description),
+                                                      new=html.escape(fields["description"])))
+            if nd:
+                fields["iso"] = nd.isoformat()
+                changes.append(t["ai_ch_date"].format(old=r.day.strftime("%d.%m.%Y"), new=nd.strftime("%d.%m.%Y")))
+            if not fields:
+                return {"error": "nothing to change"}
+            card = t["ai_d_edit_other"].format(date=r.day.strftime("%d.%m.%Y"), desc=html.escape(r.description),
+                                               changes="\n".join(changes))
+            return self._draft(ctx, "edit_other", {"expect": r.expect(), "fields": fields}, card)
+        if kind == "shop":
+            return {"error": "use draft_shop_expense with the date to change a store expense"}
+        return {"error": "kind must be inflow | outflow | other"}
+
+    async def _w_delete(self, ctx: Ctx, kind: str = "", row: Any = None, date: str = "", reason: str = "") -> Any:
+        t = get_texts(ctx.lang)
+        kind = (kind or "").strip().lower()
+        if kind in ("inflow", "outflow"):
+            e = await self._find_entry(kind, row)
+            if e is None:
+                return {"error": "row not found — call find_entries again"}
+            cur = "сум" if ctx.lang == "ru" else "so'm"
+            card = t["ai_d_del_in" if kind == "inflow" else "ai_d_del_out"].format(
+                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=html.escape(e.name),
+                qty=_n(e.qty), unit=html.escape(e.unit), party=html.escape(e.party or "—"),
+                purpose=html.escape(e.purpose or "—"),
+                price=f"{_n(e.price)} {cur}" if e.price else t["wh_price_later_mark"])
+            return self._draft(ctx, "del_in" if kind == "inflow" else "del_out",
+                               {"expect": e.expect(), "name": e.name}, card)
+        if kind == "other":
+            rows = await self._other_rows()
+            r = next((x for x in rows if x.row == int(_num(row) or 0)), None)
+            if r is None:
+                return {"error": "row not found — call find_entries again"}
+            from app.services.other_expenses import category_label as other_label
+            card = t["ai_d_del_other"].format(date=r.day.strftime("%d.%m.%Y"), cat=html.escape(other_label(r.category, ctx.lang)),
+                                              desc=html.escape(r.description), amount=_n(r.amount))
+            return self._draft(ctx, "del_other", {"expect": r.expect()}, card)
+        if kind == "shop":
+            d = _parse_day(date, self.today())
+            found = await self._shop.get_day(d)
+            old = found[1] if found and found[0] else None
+            if not old:
+                return {"error": "no store expense on this date"}
+            sent = bool(self._pending and await self._pending.is_sent("shop", d.isoformat()) is True)
+            reason = _clean(reason, 200)
+            if sent and not reason:
+                return {"error": "reason required: this day was already reported to the Boss"}
+            card = t["ai_d_clear_shop"].format(date=d.strftime("%d.%m.%Y"), old=_n(old))
+            if sent:
+                card += t["ai_d_shop_audit"].format(reason=html.escape(reason))
+            return self._draft(ctx, "clear_shop", {"iso": d.isoformat(), "old": old, "audit": sent,
+                                                   "reason": reason}, card)
+        return {"error": "kind must be inflow | outflow | other | shop"}
 
     async def _w_product(self, ctx: Ctx, name: str = "", category: str = "", unit: str = "", min_stock: Any = None,
                          pack: Any = None) -> Any:
@@ -549,6 +793,28 @@ class AIAgent:
         return self._draft(ctx, "product", {"name": name, "category": cat, "unit": unit, "pack": pk, "min": mn},
                            card)
 
+    async def _w_rename(self, ctx: Ctx, product: str = "", new_name: str = "") -> Any:
+        t = get_texts(ctx.lang)
+        p, err = await self._need_product(product)
+        if err:
+            return err
+        new = _clean(new_name, 100)
+        if len(new) < 2:
+            return {"error": "new_name required"}
+        dup = exact_match(new, [x.name for x in await self._wh.catalog()])
+        if dup and dup != p.name:
+            return {"error": "already_exists", "name": dup}
+        card = t["ai_d_rename"].format(old=html.escape(p.name), new=html.escape(new))
+        return self._draft(ctx, "rename", {"old": p.name, "new": new}, card)
+
+    async def _w_del_product(self, ctx: Ctx, product: str = "") -> Any:
+        t = get_texts(ctx.lang)
+        p, err = await self._need_product(product)
+        if err:
+            return err
+        card = t["ai_d_del_product"].format(name=html.escape(p.name), stock=_n(p.stock), unit=html.escape(p.unit))
+        return self._draft(ctx, "del_product", {"name": p.name}, card)
+
     async def _w_adjust(self, ctx: Ctx, product: str = "", delta: Any = None) -> Any:
         t = get_texts(ctx.lang)
         p, err = await self._need_product(product)
@@ -561,8 +827,7 @@ class AIAgent:
             return {"error": "stock would become negative", "stock": _r(p.stock)}
         card = t["ai_d_adjust"].format(name=html.escape(p.name), stock=_n(p.stock), after=_n(p.stock + d),
                                        unit=html.escape(p.unit), delta=("+" if d > 0 else "−") + _n(abs(d)))
-        return self._draft(ctx, "adjust", {"name": p.name, "unit": p.unit, "delta": d,
-                                           "price": p.avg_price or None}, card)
+        return self._draft(ctx, "adjust", {"name": p.name, "unit": p.unit, "delta": d}, card)
 
     async def _w_price(self, ctx: Ctx, product: str = "", price_per_unit: Any = None, date: str = "") -> Any:
         t = get_texts(ctx.lang)
@@ -596,7 +861,7 @@ class AIAgent:
         return self._draft(ctx, "price", {"row": r.row, "name": r.name, "qty": r.qty,
                                           "iso": r.day.isoformat() if r.day else "", "price": price}, card)
 
-    async def _w_shop(self, ctx: Ctx, amount: Any = None, date: str = "") -> Any:
+    async def _w_shop(self, ctx: Ctx, amount: Any = None, date: str = "", reason: str = "") -> Any:
         t = get_texts(ctx.lang)
         value = _money(amount)
         if value is None or value <= 0:
@@ -605,13 +870,17 @@ class AIAgent:
         day = _parse_day(date, today)
         if day > today:
             return {"error": "future date"}
-        if self._pending is not None and await self._pending.is_sent("shop", day.isoformat()) is True:
-            return {"error": "already_sent_to_boss",
-                    "hint": "Changes after sending need a reason: use the 🏪 Do'kon xarajati button."}
         found = await self._shop.get_day(day)
         old = found[1] if found and found[0] and found[1] is not None else None
+        sent = bool(self._pending is not None and await self._pending.is_sent("shop", day.isoformat()) is True)
+        reason = _clean(reason, 200)
+        if sent and not reason:
+            return {"error": "reason required: this day was already reported to the Boss (ask the reason)"}
         card = t["ai_d_shop"].format(date=day.strftime("%d.%m.%Y"), old=_n(old) if old else "—", amount=_n(value))
-        return self._draft(ctx, "shop", {"iso": day.isoformat(), "amount": value}, card)
+        if sent:
+            card += t["ai_d_shop_audit"].format(reason=html.escape(reason))
+        return self._draft(ctx, "shop", {"iso": day.isoformat(), "amount": value, "old": old or 0, "audit": sent,
+                                         "reason": reason}, card)
 
     async def _w_other(self, ctx: Ctx, amount: Any = None, category: str = "", description: str = "",
                        date: str = "") -> Any:
@@ -636,6 +905,28 @@ class AIAgent:
         return self._draft(ctx, "other", {"iso": day.isoformat(), "category": cat, "description": desc,
                                           "amount": value}, card)
 
+    async def _w_directory(self, ctx: Ctx, kind: str = "", action: str = "", value: str = "") -> Any:
+        from app.services.warehouse import MASTER, UNIT_KIND
+        t = get_texts(ctx.lang)
+        k = (kind or "").strip().lower()
+        dk = MASTER if k.startswith(("mas", "ust", "мас")) else UNIT_KIND if k.startswith(("un", "bir", "ед")) else None
+        act = (action or "").strip().lower()
+        add = act.startswith(("add", "qo", "доб"))
+        if dk is None or not (add or act.startswith(("del", "o'ch", "уда", "och"))):
+            return {"error": "kind must be master|unit and action add|delete"}
+        val = _clean(value, 60 if dk == MASTER else 15)
+        if not val:
+            return {"error": "value required"}
+        existing = await self._wh.directory(dk)
+        hit = next((x for x in existing if x.casefold() == val.casefold()), None)
+        if add and hit:
+            return {"error": "already_exists", "value": hit}
+        if not add and not hit:
+            return {"error": "not_found", "existing": existing[:30]}
+        label = t["ai_dir_master" if dk == MASTER else "ai_dir_unit"]
+        card = t["ai_d_dir_add" if add else "ai_d_dir_del"].format(kind=label, value=html.escape(hit or val))
+        return self._draft(ctx, "dir_add" if add else "dir_del", {"dk": dk, "value": hit or val}, card)
+
     async def run_tool(self, name: str, args: Dict[str, Any], ctx: Ctx) -> Any:
         tool = self._tools.get(name)
         if tool is None or not tool.allow(ctx.role):
@@ -652,30 +943,41 @@ class AIAgent:
     # ---------------- Gemini ----------------
     def _system(self, role: Optional[Role], lang: str) -> str:
         today = self.today()
-        refusal = get_texts(lang)["ai_offtopic"]
+        t = get_texts(lang)
+        refusal = t["ai_offtopic"]
         language = "Russian" if lang == "ru" else "Uzbek (Latin script)"
+        caps = _plain(t.get(f"caps_{role.value}", "")) if role else ""
         if role in WRITE_ROLES:
-            rights = ("This user MAY record operations, but ONLY by calling the draft_* tools. A draft is NOT saved: "
-                      "tell the user to check the card and press ✅ Tasdiqlash. Never claim something is saved. "
-                      "If a tool returns an error (missing supplier/recipient, ambiguous product, not enough stock), "
-                      "ask ONE short question. If the product is missing, offer to create it with draft_new_product.")
+            rights = ("This user MAY create, edit and delete records (today or past dates), but ONLY via draft_* "
+                      "tools; nothing is saved until the user presses ✅ Tasdiqlash on each card. Never claim something "
+                      "is saved. To edit or delete: call find_entries first, then use the exact `row`. If several rows "
+                      "match, list them briefly (date, qty, party) and ask which one. For compound commands call "
+                      "several tools in a row (one draft per item). If a tool returns an error (missing supplier / "
+                      "recipient / reason, ambiguous product, not enough stock), ask ONE short question.")
+        elif role == Role.MASTER:
+            rights = ("This user is a Master (Usta): may only view stock / low stock (NO prices, NO money) and create "
+                      "outflow drafts (draft_outflow). For anything else (inflow, prices, catalog, expenses, editing "
+                      "or deleting records, reports) say politely that it is not available for their role.")
         else:
-            rights = ("This user is the Boss: READ-ONLY analytics. If asked to record an inflow, outflow, price, "
-                      "product or expense, politely say that only the Admin and the Storekeeper record operations.")
+            rights = ("This user is the Boss: READ-ONLY analytics. If asked to record, edit or delete anything, "
+                      "politely say that only the Admin and the Storekeeper record operations.")
         return (
-            "You are the assistant of the «Ziyo Zamir MCHJ» furniture factory Telegram bot. "
+            "You are the voice & text assistant of the «Ziyo Zamir MCHJ» furniture factory Telegram bot. "
             f"Today: {today.isoformat()} ({today.strftime('%A')}), timezone Asia/Tashkent. "
             f"User role: {role.value if role else 'unknown'}. Reply in {language}; if the user writes in another "
             "language, reply in that language.\n"
             "DOMAIN LOCK: answer ONLY about this factory's work: warehouse stock, inflows/outflows (Приход/Расход), "
             "product catalog and prices, store expenses (Do'kon xarajati), other operational expenses (Прочие "
-            "расходы), staff attendance and payroll, and how to use this bot. For ANYTHING else (general chat, "
-            "weather, news, jokes, coding, recipes, personal advice, politics, translations, math homework, etc.) "
-            f"do not answer it and reply with exactly this one sentence and nothing more: {refusal}\n"
+            "расходы), staff attendance and payroll, changing the bot language, and how to use this bot. For ANYTHING "
+            "else (general chat, weather, news, jokes, coding, recipes, personal advice, politics, translations, math "
+            f"homework, etc.) do not answer it and reply with exactly this one sentence and nothing more: {refusal}\n"
+            "HELP: if the user asks what they can do, asks for help ('yordam', 'nima qila olaman', 'qanday "
+            "ishlataman', 'помощь') or seems unsure, reply with ONLY these 4-6 short bullets for their role (never "
+            f"mention features of other roles):\n{caps}\n"
+            "LANGUAGE: if the user asks to switch the language, call change_language at once.\n"
             "Get every number ONLY from the tools; never invent data; if not found, say so. Money in so'm with "
-            "space thousands (1 250 000). Resolve 'this week', 'last month' from today. Be brief: at most 6 short "
-            "lines or bullets, plain text, **bold** allowed. Bot buttons for manual work: 📥 Kirim, 📤 Chiqim, "
-            "📦 Mahsulotlar, 📊 Qoldiqlar, 🧾 Boshqa xarajatlar, 📝 Yo'qlama, 🏪 Do'kon xarajati.\n" + rights)
+            "space thousands (1 250 000). Resolve 'today', 'yesterday', 'this week', 'last month' from today. Be brief: "
+            "at most 6 short lines or bullets, plain text, **bold** allowed.\n" + rights)
 
     def _declarations(self, role: Optional[Role]):
         from google.genai import types
@@ -692,15 +994,48 @@ class AIAgent:
             decls.append(types.FunctionDeclaration(name=tool.name, description=tool.description, parameters=params))
         return [types.Tool(function_declarations=decls)] if decls else None
 
-    def _config(self, role: Optional[Role], lang: str):
+    def _config(self, role: Optional[Role], lang: str, model: Optional[str] = None):
         from google.genai import types
         kwargs: Dict[str, Any] = dict(
             system_instruction=self._system(role, lang), tools=self._declarations(role),
             max_output_tokens=MAX_OUTPUT_TOKENS,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
-        if re.match(r"^gemini-[12]\.", self.model or ""):
+        if re.match(r"^gemini-[12]\.", model or self.model or ""):
             kwargs["temperature"] = TEMPERATURE            # Gemini 3+: temperature eskirgan — yuborilmaydi
         return types.GenerateContentConfig(**kwargs)
+
+    async def _generate(self, contents: List[Any], role: Optional[Role], lang: str, state: Dict[str, Any]):
+        """Asosiy model -> (429 / 503 / 404) -> zaxira model. `state["model"]` — shu navbatda ishlayotgan model
+        (zaxiraga o'tilgach navbat oxirigacha zaxirada qoladi)."""
+        from google.genai import errors
+        models = [state.get("model") or self.model]
+        if models[0] == self.model and self.fallback_model:
+            if time.monotonic() < self._primary_down_until:
+                models = [self.fallback_model]
+            else:
+                models.append(self.fallback_model)
+        codes: List[Any] = []
+        for i, model in enumerate(models):
+            try:
+                resp = await self._client.aio.models.generate_content(
+                    model=model, contents=contents, config=self._config(role, lang, model))
+                state["model"] = model
+                return resp
+            except errors.APIError as e:
+                code = getattr(e, "code", None)
+                codes.append(code)
+                if code in FALLBACK_CODES and i + 1 < len(models):
+                    logger.warning("Primary model %s unavailable (%s), switching to fallback %s",
+                                   model, code, models[i + 1])
+                    if code == 429:
+                        self._primary_down_until = time.monotonic() + PRIMARY_SKIP
+                    continue
+                if code == 429 and all(c == 429 for c in codes):
+                    raise AgentBusy() from e
+                if code in (429, 503) and len(models) == 1:
+                    raise AgentBusy() from e
+                raise
+        raise AgentBusy()
 
     def _history_for(self, user_id: int) -> Deque[Any]:
         now = time.monotonic()
@@ -718,13 +1053,13 @@ class AIAgent:
 
     async def ask(self, user_id: int, role: Optional[Role], lang: str, text: str = "",
                   audio: Optional[bytes] = None, image: Optional[bytes] = None,
-                  image_mime: str = "image/jpeg", name: str = "") -> "AgentReply":
-        """Javob (Telegram HTML) + tasdiqlash kerak bo'lgan qoralamalar."""
+                  image_mime: str = "image/jpeg", name: str = "") -> AgentReply:
+        """Javob (Telegram HTML) + tasdiqlash kerak bo'lgan qoralamalar + (bo'lsa) yangi til."""
         if not self.enabled:
             raise RuntimeError("AI agent is disabled")
         if not ai_allowed(role):
             raise AgentDenied()
-        from google.genai import errors, types
+        from google.genai import types
         self._check_cooldown(user_id)
         ctx = Ctx(user_id, role, lang, name)
         parts = []
@@ -732,42 +1067,32 @@ class AIAgent:
             parts.append(types.Part.from_bytes(data=audio, mime_type="audio/ogg"))
         if image:
             parts.append(types.Part.from_bytes(data=image, mime_type=image_mime))
-        prompt = (text or "").strip() or ("Listen to the voice message and answer it." if audio else
+        prompt = (text or "").strip() or ("Listen to the voice message and act on it." if audio else
                                           "What is in this photo (work-related)?" if image else "")
         parts.append(types.Part(text=prompt[:2000]))
         history = self._history_for(user_id)
         contents: List[Any] = list(history) + [types.Content(role="user", parts=parts)]
-        config = self._config(role, lang)
         answer = ""
+        run: Dict[str, Any] = {}
         async with self._sem:
-            try:
-                for _ in range(MAX_ROUNDS):
-                    resp = await self._client.aio.models.generate_content(model=self.model, contents=contents,
-                                                                          config=config)
-                    calls = list(getattr(resp, "function_calls", None) or [])
-                    if not calls:
-                        answer = (getattr(resp, "text", None) or "").strip()
-                        break
-                    contents.append(resp.candidates[0].content)     # thought signature'lar ham saqlanadi
-                    replies = []
-                    for call in calls:
-                        logger.info("AI vositasi: %s (user=%s)", call.name, user_id)
-                        result = await self.run_tool(call.name, dict(call.args or {}), ctx)
-                        replies.append(types.Part.from_function_response(name=call.name, response={"result": result}))
-                    contents.append(types.Content(role="user", parts=replies))
-            except errors.APIError as e:
-                if getattr(e, "code", None) in (429, 503):
-                    raise AgentBusy() from e
-                raise
+            for _ in range(MAX_ROUNDS):
+                resp = await self._generate(contents, role, ctx.new_lang or lang, run)
+                calls = list(getattr(resp, "function_calls", None) or [])
+                if not calls:
+                    answer = (getattr(resp, "text", None) or "").strip()
+                    break
+                contents.append(resp.candidates[0].content)     # thought signature'lar ham saqlanadi
+                replies = []
+                for call in calls:
+                    logger.info("AI vositasi: %s (user=%s)", call.name, user_id)
+                    result = await self.run_tool(call.name, dict(call.args or {}), ctx)
+                    replies.append(types.Part.from_function_response(name=call.name, response={"result": result}))
+                contents.append(types.Content(role="user", parts=replies))
+        out_lang = ctx.new_lang or lang
         if not answer:
-            answer = get_texts(lang)["ai_draft_hint"] if ctx.drafts else "…"
+            answer = get_texts(out_lang)["ai_draft_hint"] if ctx.drafts else (
+                get_texts(out_lang)["ai_lang_done"] if ctx.new_lang else "…")
         note = (text or "").strip() or ("[voice]" if audio else "[photo]")
         history.append(types.Content(role="user", parts=[types.Part(text=note[:500])]))
         history.append(types.Content(role="model", parts=[types.Part(text=answer[:800])]))
-        return AgentReply(to_telegram_html(answer), ctx.drafts)
-
-
-@dataclass
-class AgentReply:
-    text: str
-    drafts: List[Draft] = field(default_factory=list)
+        return AgentReply(to_telegram_html(answer), ctx.drafts, ctx.new_lang)

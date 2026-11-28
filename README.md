@@ -7,10 +7,12 @@
    - `ADMIN_IDS` ga administratorning Telegram ID sini yozing (@userinfobot dan bilib olinadi).
      Bir nechta admin bo'lsa vergul bilan: `111,222`.
    - 🤖 AI yordamchi (ixtiyoriy, bepul): `GEMINI_API_KEY` — https://aistudio.google.com/apikey dan olinadi;
-     `GEMINI_MODEL` (standart `gemini-3.5-flash-lite`). Kalit bo'lmasa yordamchi o'chiq, bot avvalgidek ishlaydi.
-     Faqat Boss / Admin / Sklad (faol rol bo'yicha); ishchiga yopiq. Faqat zavod ishiga oid savollar.
-     Admin va Sklad: Kirim, Chiqim, yangi mahsulot, qoldiq, narx, do'kon / boshqa xarajat — qoralama karta
-     orqali, «✅ Tasdiqlash» bosilgandagina yoziladi. Boss: faqat o'qish va tahlil.
+     `GEMINI_PRIMARY_MODEL` (standart `gemini-3.5-flash`, `GEMINI_MODEL` ham qabul qilinadi) va
+     `GEMINI_FALLBACK_MODEL` (standart `gemini-3.5-flash-lite`: asosiy model 429 / 503 / 404 bersa).
+     Kalit bo'lmasa yordamchi o'chiq, bot avvalgidek ishlaydi.
+     Boss / Admin / Sklad / Usta (faol rol bo'yicha); ishchiga yopiq. Faqat zavod ishiga oid savollar.
+     Barcha yozish / tahrirlash / o'chirish — karta orqali, «✅ Tasdiqlash» bosilgandagina.
+     Batafsil: [docs/AI_VOICE_GUIDE_UZ.md](docs/AI_VOICE_GUIDE_UZ.md).
 3. Buyruqlar (alohida-alohida):
 
     pip install -r requirements.txt

@@ -31,7 +31,7 @@ from app.utils.periods import (
     WINTER,
 )
 
-ASSIGNABLE_ON_REQUEST = (Role.BOSS, Role.STOREKEEPER, Role.WORKER)
+ASSIGNABLE_ON_REQUEST = (Role.BOSS, Role.STOREKEEPER, Role.MASTER, Role.WORKER)
 
 
 def _btn(text: str, cb) -> InlineKeyboardButton:
@@ -312,7 +312,7 @@ def digest_kb(t: dict[str, str], kind: str, key: str, showing: str = "brief") ->
 def role_pick_kb(t: dict[str, str]) -> InlineKeyboardMarkup:
     from app.keyboards.callbacks import RoleCb
     return _grid([_btn(t["role_boss"], RoleCb(r="boss")), _btn(t["role_storekeeper"], RoleCb(r="storekeeper")),
-                  _btn(t["role_worker"], RoleCb(r="worker"))],
+                  _btn("👷 " + t["role_master"], RoleCb(r="master")), _btn(t["role_worker"], RoleCb(r="worker"))],
                  [[_btn(t["btn_admin_back"], RoleCb(r="admin"))]])
 
 

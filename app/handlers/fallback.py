@@ -14,7 +14,9 @@ from app.keyboards import warehouse as wkb
 from app.keyboards.reply import main_menu_kb
 from app.handlers.ai_confirm import confirm_kb
 from app.models import User
+from app.locales.texts import get_texts
 from app.services.ai_agent import AgentBusy, AgentCooldown, AgentDenied, ai_allowed, is_trivial
+from app.services.lang_switch import detect as detect_language_switch
 from app.services.categories import label as cat_label
 from app.services.search import exact_match, normalize, search_products
 
@@ -26,6 +28,7 @@ ACTION_ROLES = (Role.STOREKEEPER, Role.ADMIN)          # 📥 / 📤 / ✏️ tu
 MAX_SHOWN = 5
 MAX_MEDIA = 15 * 1024 * 1024                          # Gemini ga inline yuboriladigan fayl chegarasi
 _QUESTION_WORDS = {"qancha", "nechta", "qaysi", "qanday", "nima", "nimaga", "qachon", "kim", "qayerda", "nega",
+                   "yordam", "help", "помощь", "помоги", "ishlataman",
                    "сколько", "какие", "какой", "какая", "как", "почему", "когда", "что", "кто", "где"}
 
 
@@ -114,7 +117,16 @@ async def _download(message: Message) -> Optional[bytes]:
     return buf.getvalue()
 
 
-async def _ask_ai(message: Message, t: dict[str, str], user: User, state: Optional[FSMContext], ai_agent) -> None:
+async def _switch_language(message: Message, user: User, code: str, repo) -> None:
+    """🌐 Til darhol almashtiriladi (SQLite) va menyu yangi tilda yuboriladi."""
+    if repo is not None:
+        await repo.set_lang(user.id, code)
+    nt = get_texts(code)
+    await message.answer(nt["lang_changed"], reply_markup=main_menu_kb(nt, user.role, user.real_role))
+
+
+async def _ask_ai(message: Message, t: dict[str, str], user: User, state: Optional[FSMContext], ai_agent,
+                  repo=None) -> None:
     """🤖 AI yordamchi: matn / ovoz / rasm. Javob kelguncha «yozmoqda…» ko'rsatiladi."""
     try:
         await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
@@ -154,14 +166,20 @@ async def _ask_ai(message: Message, t: dict[str, str], user: User, state: Option
         # nom kabi qisqa matn katalogda topilmadi: AI javobi + «➕ ... ni omborga qo'shish»
         await state.update_data(lookup_q=query)
         markup = wkb.lookup_add_kb(t, query)
-    await message.answer(reply.text, reply_markup=markup)
+    if reply.new_lang and reply.new_lang != t.get("lang_code"):
+        await _switch_language(message, user, reply.new_lang, repo)          # 🎙 «Tilni rus tiliga o'zgartir»
+        t = get_texts(reply.new_lang)
+        if not reply.drafts:
+            return
+    else:
+        await message.answer(reply.text, reply_markup=markup)
     for draft in reply.drafts:                     # ✍️ yozish faqat tasdiqlangandan keyin
         await message.answer(draft.card, reply_markup=confirm_kb(t, draft.id))
 
 
 @router.message()
 async def unknown_message(message: Message, t: dict[str, str], user: User | None = None,
-                          state: Optional[FSMContext] = None, warehouse=None, ai_agent=None) -> None:
+                          state: Optional[FSMContext] = None, warehouse=None, ai_agent=None, repo=None) -> None:
     """Hech bir handler mos kelmasa.
 
     Faol jarayon (FSM holati) bo'lmasa:
@@ -171,25 +189,33 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
     if user is None:
         return
     in_flow = state is not None and await state.get_state() is not None
+    if message.text and not in_flow:
+        code = detect_language_switch(message.text)        # «Tilni rus tiliga o'zgartir» — API siz, hamma uchun
+        if code:
+            await _switch_language(message, user, code, repo)
+            return
     # 🤖 faqat Boss / Admin / Sklad (faol rol bo'yicha); ishchiga Gemini umuman chaqirilmaydi
     ai_on = bool(ai_agent is not None and getattr(ai_agent, "enabled", False) and not in_flow
                  and ai_allowed(user.role))
     if ai_on and (message.voice or message.photo):
-        await _ask_ai(message, t, user, state, ai_agent)
+        await _ask_ai(message, t, user, state, ai_agent, repo)
         return
     if ai_on and message.text and is_trivial(message.text):
         ai_on = False                              # «+», «.», «ok», emoji — API chaqirilmaydi
     if message.text and not message.text.startswith("/"):
         if ai_on and _looks_like_question(message.text):
-            await _ask_ai(message, t, user, state, ai_agent)
+            await _ask_ai(message, t, user, state, ai_agent, repo)
             return
         if user.role in LOOKUP_ROLES and warehouse is not None and state is not None:
             res = await _lookup(message, t, user, state, warehouse, ai_on=ai_on)
             if res == "shown":
                 return
             if res == "ai":
-                await _ask_ai(message, t, user, state, ai_agent)
+                await _ask_ai(message, t, user, state, ai_agent, repo)
                 return
+        elif ai_on:
+            await _ask_ai(message, t, user, state, ai_agent, repo)   # 👷 usta: narxli kartalar o'rniga AI
+            return
     logger.info("Handler topilmadi: user_id=%s role=%s text=%r",
                 user.id, user.role.value if user.role else None, message.text)
     await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role, user.real_role))

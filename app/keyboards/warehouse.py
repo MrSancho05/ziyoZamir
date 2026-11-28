@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Sequence
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.keyboards.callbacks import WhCb
+from app.keyboards.callbacks import HiCb, WhCb
 
 MAX_LABEL = 30
 
@@ -153,7 +153,7 @@ def pm_menu_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
     return grid([_b(t["wh_pm_add"], "pm", k="add"), _b(t["wh_pm_rename"], "pm", k="ren"),
                  _b(t["wh_pm_delete"], "pm", k="del"), _b(t["wh_pm_cats"], "cm"),
                  _b(t["wh_pm_unpriced"], "unp"), _b(t["wh_pm_masters"], "dm", k="master"),
-                 _b(t["wh_pm_units"], "dm", k="unit")],
+                 _b(t["wh_pm_units"], "dm", k="unit"), InlineKeyboardButton(text=t["wh_pm_history"], callback_data=HiCb(a="menu").pack())],
                 [cancel_row(t, back=False)])
 
 
@@ -283,9 +283,9 @@ def norm_kb(t: Dict[str, str], suggestion: Optional[str], unit: str) -> InlineKe
 
 
 # ---------- xatolardan tiklanish ----------
-def zero_stock_kb(t: Dict[str, str]) -> InlineKeyboardMarkup:
-    return grid([], [[_b(t["wh_btn_to_inflow"], "tokir")], [_b(t["wh_btn_step_back"], "cats"),
-                                                            _b(t["wh_btn_cancel"], "cancel")]])
+def zero_stock_kb(t: Dict[str, str], to_inflow: bool = True) -> InlineKeyboardMarkup:
+    nav = [[_b(t["wh_btn_to_inflow"], "tokir")]] if to_inflow else []
+    return grid([], nav + [[_b(t["wh_btn_step_back"], "cats"), _b(t["wh_btn_cancel"], "cancel")]])
 
 
 def over_stock_kb(t: Dict[str, str], avail: str, unit: str) -> InlineKeyboardMarkup:
@@ -306,9 +306,10 @@ def kromka_size_kb(t: Dict[str, str], sizes: Sequence[str]) -> InlineKeyboardMar
     return kb.as_markup()
 
 
-def kromka_colors_kb(t: Dict[str, str], labels: Sequence[str], size: str) -> InlineKeyboardMarkup:
-    return grid([_b(_short(lbl, 40), "krc", i) for i, lbl in enumerate(labels)],
-                [[_b(t["wh_btn_krm_new"].format(size=size), "krn")], cancel_row(t)], cols=1)
+def kromka_colors_kb(t: Dict[str, str], labels: Sequence[str], size: str,
+                     allow_new: bool = True) -> InlineKeyboardMarkup:
+    nav = [[_b(t["wh_btn_krm_new"].format(size=size), "krn")]] if allow_new else []
+    return grid([_b(_short(lbl, 40), "krc", i) for i, lbl in enumerate(labels)], nav + [cancel_row(t)], cols=1)
 
 
 def kromka_ref_kb(t: Dict[str, str], labels: Sequence[str]) -> InlineKeyboardMarkup:

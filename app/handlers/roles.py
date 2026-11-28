@@ -1,4 +1,4 @@
-"""🎭 Rolni sinash (faqat haqiqiy admin) va ❓ Yordam (har bir rol uchun alohida qisqa yo'riqnoma).
+"""🎭 Rolni sinash (faqat haqiqiy admin) va /help (faol rolga ruxsat etilgan amallar).
 
 Rolni sinash bazadagi admin huquqini O'ZGARTIRMAYDI: tanlangan rol faqat shu sessiya xotirasida
 (UserStore) saqlanadi va AccessMiddleware har bir so'rovda `user.role` ni vaqtincha almashtiradi.
@@ -61,10 +61,20 @@ async def back_to_admin(message: Message, t: Dict[str, str], user: User, store: 
     await message.answer(t["role_restored"], reply_markup=main_menu_kb(t, Role.ADMIN))
 
 
+def role_help_text(t: Dict[str, str], role: Optional[Role]) -> str:
+    """Faqat faol rolga ruxsat etilgan amallar (yuqori rollarning yashirin imkoniyatlari aytilmaydi)."""
+    role = role or Role.WORKER
+    text = t[f"caps_{role.value}"]
+    if role != Role.WORKER:
+        text += "\n\n" + t["caps_ai_tail"]
+    return text
+
+
+# Eski ❓ Yordam tugmasi telefonda qolib ketgan bo'lsa ham ishlaydi (menyu yangilanadi)
+@router.message(Command("help"))
 @router.message(F.text.in_(all_texts("btn_help")))
 async def show_help(message: Message, t: Dict[str, str], user: User) -> None:
-    role = user.role.value if user.role else Role.WORKER.value
-    text = t[f"help_{role}"]
+    text = role_help_text(t, user.role)
     if user.real_role == Role.ADMIN and user.role != Role.ADMIN:
-        text += "\n\n" + t["help_role_test_note"].format(role=t[f"role_{role}"])
+        text += "\n\n" + t["help_role_test_note"].format(role=t[f"role_{user.role.value}"])
     await message.answer(text, reply_markup=main_menu_kb(t, user.role, real_role=user.real_role))

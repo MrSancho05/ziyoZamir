@@ -110,6 +110,17 @@ CREATE TABLE IF NOT EXISTS unpriced_items (
 );
 CREATE INDEX IF NOT EXISTS idx_unpriced_open ON unpriced_items (resolved, entry_date);
 
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  INTEGER NOT NULL,            -- unix vaqt
+    user_id     INTEGER,
+    user_name   TEXT,
+    source      TEXT,                        -- ai | menu | bot
+    action      TEXT NOT NULL,               -- inflow | del_in | edit_out | shop | del_other ...
+    target      TEXT,
+    details     TEXT                         -- JSON
+);
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

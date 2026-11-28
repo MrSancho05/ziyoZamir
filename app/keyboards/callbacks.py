@@ -87,3 +87,10 @@ class AiCb(CallbackData, prefix="ai"):
     """🤖 AI qoralamasini tasdiqlash: a = ok | no, d = draft_id."""
     a: str
     d: str
+
+
+class HiCb(CallbackData, prefix="hi"):
+    """🗂 Yozuvlarni tahrirlash (menyu): a = menu | kind | row | ed | del, k = in | out | other | shop / maydon."""
+    a: str
+    k: str = ""
+    i: int = 0

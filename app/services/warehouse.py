@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from gspread.exceptions import WorksheetNotFound
 from gspread.utils import ValueInputOption, ValueRenderOption, rowcol_to_a1
 
+from app.services import cache_bus
 from app.services.categories import merge as merge_categories
 from app.services.flows_grid import parse_cell_date
 from app.services.kromka import CATEGORY as KROMKA_CATEGORY
@@ -216,6 +217,26 @@ class OutflowItem:
 
 
 @dataclass
+class FlowEntry:
+    """«Приход» (kind=in) yoki «Расход» (kind=out) dagi bitta qator."""
+    kind: str
+    row: int
+    day: Optional[date]
+    name: str
+    unit: str
+    qty: float
+    price: Optional[float] = None
+    total: Optional[float] = None
+    party: str = ""              # do'kon (Приход) / oluvchi usta (Расход)
+    purpose: str = ""
+
+    def expect(self) -> Dict[str, Any]:
+        """Tasdiqlashgacha qator siljigan bo'lsa ham aynan shu yozuvni topish uchun."""
+        return {"kind": self.kind, "row": self.row, "iso": self.day.isoformat() if self.day else "",
+                "name": self.name, "qty": self.qty}
+
+
+@dataclass
 class _FlowsCache:
     ts: float = 0.0
     last_price: Dict[str, float] = field(default_factory=dict)
@@ -267,10 +288,15 @@ class WarehouseService:
         """ISO sana: USER_ENTERED bilan yozilganda Google Sheets uni haqiqiy sana sifatida (2-qator formatida) oladi."""
         return self.today().isoformat()
 
-    def invalidate(self) -> None:
+    def reset_caches(self) -> None:
         self._catalog_ts = 0.0
         self._flows.ts = 0.0
         self._directory_ts = 0.0
+
+    def invalidate(self) -> None:
+        """Ombor keshi + qolgan barcha keshlar (Dashboard, «Прочие расходы») — cache_bus orqali."""
+        self.reset_caches()
+        cache_bus.invalidate_all()
 
     @staticmethod
     def _values(ws) -> List[List[Any]]:
@@ -1285,6 +1311,143 @@ class WarehouseService:
         except Exception:
             logger.warning("Mahsulotni Справочник dan o'chirib bo'lmadi", exc_info=True)
         return row
+
+    # ---------- 🗂 Приход / Расход yozuvlari: topish, tahrirlash, o'chirish (bugungi va o'tgan kunlar) ----------
+    def _entry_tab(self, kind: str) -> str:
+        return self.inflow_tab if kind == "in" else self.outflow_tab
+
+    @staticmethod
+    def _entry_cols(kind: str, header: Sequence[Any]) -> Dict[str, Optional[int]]:
+        if kind == "in":
+            return WarehouseService._inflow_cols(header)
+        return {"date": _find_col(header, "Дата"), "name": _find_col(header, "Наименование товара", "наименование"),
+                "qty": _find_col(header, "Количество расхода", "количество", "кол"),
+                "purpose": _find_col(header, "Заказ / Цех / На какое изделие", "заказ", "цех", "изделие"),
+                "who": _find_col(header, "Ответственный", "ответствен"),
+                "sum": _find_col(header, "Сумма расхода (сум)", "сумма расхода", "сумма")}
+
+    def _parse_entries(self, kind: str, values: List[List[Any]]) -> Tuple[int, Dict[str, Optional[int]],
+                                                                          List[FlowEntry]]:
+        h = _header_index(values, "Наименование товара", "наименование")
+        c = self._entry_cols(kind, values[h] if values else [])
+        year = self.today().year
+        out: List[FlowEntry] = []
+        for i, row in enumerate(values[h + 1:], start=h + 2):
+            name = str(_cell(row, c["name"])).strip()
+            if not name:
+                continue
+            qty = parse_number(_cell(row, c["qty"])) or 0.0
+            if kind == "in":
+                out.append(FlowEntry("in", i, to_date(_cell(row, c["date"]), year), name,
+                                     str(_cell(row, c["unit"])).strip(), qty, parse_number(_cell(row, c["price"])),
+                                     parse_number(_cell(row, c["total"])), str(_cell(row, c["sup"])).strip()))
+            else:
+                out.append(FlowEntry("out", i, to_date(_cell(row, c["date"]), year), name, "", qty, None,
+                                     parse_number(_cell(row, c["sum"])), str(_cell(row, c["who"])).strip(),
+                                     str(_cell(row, c["purpose"])).strip()))
+        return h, c, out
+
+    def _entries_sync(self, kind: str) -> List[FlowEntry]:
+        try:
+            values = self._values(self._ws(self._entry_tab(kind)))
+        except WorksheetNotFound:
+            return []
+        return self._parse_entries(kind, values)[2] if values else []
+
+    async def flow_entries(self, kind: str, name: str = "", day: Optional[date] = None,
+                           limit: int = 15) -> List[FlowEntry]:
+        """Mahsulot (kirill/lotin, xato yozilgan ham) va sana bo'yicha; eng yangisi birinchi."""
+        from app.services.search import exact_match, normalize, search_products
+        entries = await self._sheets.run(self._entries_sync, kind)
+        if day is not None:
+            entries = [e for e in entries if e.day == day]
+        if name:
+            names = sorted({e.name for e in entries})
+            exact = exact_match(name, names)
+            if exact:
+                keep = {exact}
+            else:
+                q = normalize(name).replace(" ", "")
+                keep = {n for n in names if q and q in normalize(n).replace(" ", "")} or                     set(search_products(name, names, limit=3))
+            entries = [e for e in entries if e.name in keep]
+        entries.sort(key=lambda e: (e.day or date.min, e.row), reverse=True)
+        return entries[:limit]
+
+    @staticmethod
+    def _locate(entries: List[FlowEntry], expect: Dict[str, Any]) -> FlowEntry:
+        """Kutilgan qator (raqami siljigan bo'lsa ham: sana + nom + miqdor bo'yicha)."""
+        def same(e: FlowEntry) -> bool:
+            return (_key(e.name) == _key(expect.get("name", "")) and abs(e.qty - float(expect.get("qty") or 0)) < 1e-6
+                    and (e.day.isoformat() if e.day else "") == (expect.get("iso") or ""))
+        by_row = next((e for e in entries if e.row == int(expect.get("row") or 0)), None)
+        if by_row is not None and same(by_row):
+            return by_row
+        matches = [e for e in entries if same(e)]
+        if len(matches) == 1:
+            return matches[0]
+        raise NotFoundError(expect.get("name", ""))
+
+    def _delete_entry_sync(self, expect: Dict[str, Any]) -> FlowEntry:
+        kind = expect["kind"]
+        ws = self._ws(self._entry_tab(kind))
+        values = self._values(ws)
+        h, c, entries = self._parse_entries(kind, values)
+        e = self._locate(entries, expect)
+        if len(entries) <= 1:
+            # oxirgi qator — formulalar namunasi (2-qator) yo'qolmasin: faqat kiritilgan qiymatlar tozalanadi
+            keys = ("date", "name", "unit", "qty", "price", "sup") if kind == "in" else \
+                ("date", "name", "qty", "purpose", "who")
+            ws.batch_update([{"range": rowcol_to_a1(e.row, c[k] + 1), "values": [[""]]} for k in keys
+                             if c.get(k) is not None], value_input_option=ValueInputOption.raw)
+        else:
+            # qator butunlay o'chiriladi: Table1/Table2 ichida bo'sh qator qolmaydi, SUMIFS o'zi qayta hisoblaydi
+            self._sheets.spreadsheet.batch_update({"requests": [{"deleteDimension": {"range": {
+                "sheetId": ws.id, "dimension": "ROWS", "startIndex": e.row - 1, "endIndex": e.row}}}]})
+        return e
+
+    async def delete_entry(self, expect: Dict[str, Any]) -> FlowEntry:
+        e = await self._sheets.run(self._delete_entry_sync, expect)
+        self.invalidate()
+        return e
+
+    def _update_entry_sync(self, expect: Dict[str, Any], fields: Dict[str, Any]) -> FlowEntry:
+        """fields: qty, price (None = narxsiz), party, purpose, iso (sana)."""
+        kind = expect["kind"]
+        ws = self._ws(self._entry_tab(kind))
+        values = self._values(ws)
+        h, c, entries = self._parse_entries(kind, values)
+        e = self._locate(entries, expect)
+        party_col = c["sup"] if kind == "in" else c["who"]
+        data = []
+        if "qty" in fields and c["qty"] is not None:
+            data.append((c["qty"], num_out(float(fields["qty"]))))
+        if "iso" in fields and c["date"] is not None:
+            data.append((c["date"], fields["iso"]))
+        if "party" in fields and party_col is not None:
+            data.append((party_col, clean_text(fields["party"], 60)))
+        if kind == "out" and "purpose" in fields and c["purpose"] is not None:
+            data.append((c["purpose"], clean_text(fields["purpose"], 100)))
+        if kind == "in" and "price" in fields and c["price"] is not None:
+            price = fields["price"]
+            data.append((c["price"], num_out(round(float(price), 2)) if price else ""))
+            total_f = ws.get(f"{e.row}:{e.row}", value_render_option=ValueRenderOption.formula)
+            tf = _cell(total_f[0] if total_f else [], c["total"]) if c["total"] is not None else None
+            if c["total"] is not None and not (isinstance(tf, str) and tf.startswith("=")):
+                qty = float(fields.get("qty", e.qty))
+                data.append((c["total"], num_out(round(qty * float(price), 2)) if price else ""))
+        if data:
+            ws.batch_update([{"range": rowcol_to_a1(e.row, col + 1), "values": [[v]]} for col, v in data],
+                            value_input_option=ValueInputOption.user_entered)
+        if kind == "in" and "price" in fields:
+            width = _width(values[h])
+            self._sheets.spreadsheet.batch_update({"requests": [
+                self._bg_request(ws, e.row, width, None if fields["price"] else YELLOW)]})
+        return e
+
+    async def update_entry(self, expect: Dict[str, Any], fields: Dict[str, Any]) -> FlowEntry:
+        e = await self._sheets.run(self._update_entry_sync, expect, fields)
+        self.invalidate()
+        return e
 
     async def delete_product(self, name: str) -> int:
         row = await self._sheets.run(self._delete_sync, name)

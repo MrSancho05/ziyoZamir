@@ -8,6 +8,7 @@ from app.handlers import (
     deficit,
     download,
     fallback,
+    history,
     language,
     my_attendance,
     other_expenses,
@@ -35,6 +36,7 @@ router.include_routers(
     top_products.router,
     deficit.router,
     download.router,
-    ai_confirm.router,  # 🤖 AI qoralamalari: ✅ Tasdiqlash / ❌ Bekor qilish
+    history.router,     # 🗂 Yozuvlarni tahrirlash / o'chirish (menyu)
+    ai_confirm.router,  # ✍️ qoralamalar (AI va 🗂 menyu): ✅ Tasdiqlash / ❌ Bekor qilish
     fallback.router,  # doim eng oxirida
 )

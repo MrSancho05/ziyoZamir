@@ -5,6 +5,7 @@ class Role(str, Enum):
     ADMIN = "admin"
     BOSS = "boss"
     STOREKEEPER = "storekeeper"
+    MASTER = "master"            # 👷 Usta: faqat qoldiqlar va 📤 Chiqim
     WORKER = "worker"
 
 
@@ -19,10 +20,11 @@ class Permission(str, Enum):
     VIEW_EXPENSES = "view_expenses"
     VIEW_TOP_PRODUCTS = "view_top_products"   # "Top mahsulotlar": FAQAT admin
     MANAGE_WAREHOUSE = "manage_warehouse"     # Kirim / Chiqim / Mahsulotlar: FAQAT admin va sklad nazoratchisi
+    MAKE_OUTFLOW = "make_outflow"             # 📤 Chiqim: admin, sklad nazoratchisi va usta
 
 
 # Rollar tartibi (ro'yxatlarda shu tartibda ko'rsatiladi)
-ROLE_ORDER: tuple[Role, ...] = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER, Role.WORKER)
+ROLE_ORDER: tuple[Role, ...] = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER, Role.MASTER, Role.WORKER)
 
 # Yangi funksional qo'shilsa: Permission ga yangi qiymat qo'shing
 # va kerakli rollarga shu yerda bering.
@@ -37,6 +39,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.MARK_EXPENSES,
         Permission.VIEW_TOP_PRODUCTS,
         Permission.MANAGE_WAREHOUSE,
+        Permission.MAKE_OUTFLOW,
     }),
     Role.BOSS: frozenset({
         Permission.VIEW_DEFICIT,
@@ -50,6 +53,13 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.MARK_ATTENDANCE,
         Permission.MARK_EXPENSES,
         Permission.MANAGE_WAREHOUSE,
+        Permission.MAKE_OUTFLOW,
+    }),
+    # 👷 Usta: qoldiq va tanqislarni ko'radi (narxsiz), 📤 Chiqim qiladi. Kirim, narxlar, katalog, xarajatlar,
+    # tahrirlash / o'chirish va Boss hisobotlari — YOPIQ
+    Role.MASTER: frozenset({
+        Permission.VIEW_DEFICIT,
+        Permission.MAKE_OUTFLOW,
     }),
     Role.WORKER: frozenset({
         Permission.VIEW_DEFICIT,

@@ -45,7 +45,8 @@ class Settings:
     other_expenses_tab: str
     webapp_url: str = ""
     gemini_api_key: str = ""                        # 🤖 AI yordamchi (bo'sh bo'lsa o'chiq)
-    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_model: str = "gemini-3.5-flash"              # asosiy model (GEMINI_PRIMARY_MODEL / GEMINI_MODEL)
+    gemini_fallback_model: str = "gemini-3.5-flash-lite"   # asosiy 429 / 503 / 404 bersa
     webapp_host: str = "0.0.0.0"
     webapp_port: int = 8080
     page_size: int = 10
@@ -132,5 +133,8 @@ def load_settings() -> Settings:
         webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
         # 🤖 AI yordamchi (Google Gemini, bepul tarif). Kalit bo'lmasa — yordamchi o'chiq, bot avvalgidek ishlaydi
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite",
+        gemini_model=(os.getenv("GEMINI_PRIMARY_MODEL", "").strip() or os.getenv("GEMINI_MODEL", "").strip()
+                      or "gemini-3.5-flash"),
+        gemini_fallback_model=os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite").strip()
+        or "gemini-3.5-flash-lite",
     )

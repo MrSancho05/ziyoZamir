@@ -10,7 +10,7 @@ from app.core.permissions import Permission, Role, has_permission
 # (ruxsat, tugma matni kaliti) — menyuda shu tartibda, 2 ustunli to'r bo'lib chiqadi
 _MENU = (
     (Permission.MANAGE_WAREHOUSE, "btn_inflow"),
-    (Permission.MANAGE_WAREHOUSE, "btn_outflow"),
+    (Permission.MAKE_OUTFLOW, "btn_outflow"),
     (Permission.MANAGE_WAREHOUSE, "btn_products"),
     (Permission.MANAGE_WAREHOUSE, "btn_other_exp"),   # 🧾 Boshqa xarajatlar
     (Permission.VIEW_DEFICIT, "btn_deficit"),
@@ -35,9 +35,8 @@ def main_menu_kb(t: Dict[str, str], role: Optional[Role], real_role: Optional[Ro
             kb.add(KeyboardButton(text=t[key]))
     if role == Role.ADMIN:
         kb.add(KeyboardButton(text=t["btn_role_test"]))
-    kb.add(KeyboardButton(text=t["btn_help"]))
+    # ❓ Yordam va 🌐 Til tugmalari yo'q: yordam — AI (yoki /help), til — ovoz / matn yoki /lang
     kb.adjust(2)
     if real_role == Role.ADMIN and role != Role.ADMIN:
         kb.row(KeyboardButton(text=t["btn_admin_back"]))    # 1 bosishda admin rejimiga qaytish
-    kb.row(KeyboardButton(text=t["btn_lang"]))     # pastki qator: to'liq kenglikda
     return kb.as_markup(resize_keyboard=True)

@@ -18,13 +18,13 @@ from typing import Any, Dict, List, Optional
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import StateFilter
+from aiogram.filters import BaseFilter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.config import Settings
-from app.core.permissions import Permission, Role
+from app.core.permissions import Permission, Role, has_permission
 from app.filters.permission import HasPermission
 from app.keyboards import warehouse as kb
 from app.keyboards.callbacks import WhCb
@@ -60,9 +60,35 @@ from app.storage.users import UserRepository
 logger = logging.getLogger(__name__)
 router = Router(name="warehouse")
 
-# Faqat admin va sklad nazoratchisi (boss va ishchida tugmalar ham ko'rinmaydi)
-router.message.filter(HasPermission(Permission.MANAGE_WAREHOUSE))
-router.callback_query.filter(HasPermission(Permission.MANAGE_WAREHOUSE))
+FLOW_IN, FLOW_OUT = "in", "out"
+# 👷 Usta faqat 📤 Chiqim bosqichlarini bosa oladi (yangi mahsulot, Kirim, tahrirlash, narx — yo'q)
+MASTER_ACTIONS = {"cat", "cats", "pg", "p", "more", "rm", "dl", "cart", "save", "cancel", "back", "who", "whonew",
+                  "skip", "pur", "qall", "qre", "srch", "noop", "krm", "krs", "krc"}
+
+
+class WarehouseAccess(BaseFilter):
+    """Admin va sklad nazoratchisi — hammasi. Usta (MAKE_OUTFLOW) — faqat ochiq 📤 Chiqim jarayoni."""
+
+    async def __call__(self, event, user: Optional[User] = None, state: Optional[FSMContext] = None) -> bool:
+        role = user.role if user is not None else None
+        if has_permission(role, Permission.MANAGE_WAREHOUSE):
+            return True
+        if not has_permission(role, Permission.MAKE_OUTFLOW):
+            return False
+        if isinstance(event, Message) and event.text in all_texts("btn_outflow"):
+            return True
+        if state is None or (await state.get_data()).get("flow") != FLOW_OUT:
+            return False
+        if isinstance(event, CallbackQuery):
+            try:
+                return WhCb.unpack(event.data or "").a in MASTER_ACTIONS
+            except Exception:
+                return False
+        return await state.get_state() is not None
+
+
+router.message.filter(WarehouseAccess())
+router.callback_query.filter(WarehouseAccess())
 
 PAGE_SIZE = 10
 FLOW_IN, FLOW_OUT, FLOW_REN, FLOW_DEL = "in", "out", "ren", "del"
@@ -223,7 +249,9 @@ async def _open_flow(message: Message, t: Dict[str, str], user: User, state: FSM
                      warehouse: WarehouseService, flow: str) -> None:
     await state.clear()
     store.clear_awaiting(user.id)          # do'kon xarajati summasi kutilayotgan bo'lsa bekor qilinadi
-    await state.update_data(flow=flow, cart=[])
+    # 👷 usta: «➕ yangi mahsulot», «📥 Kirimga o'tish», «➕ yangi kromka» tugmalari ko'rinmaydi
+    lite = not has_permission(user.role, Permission.MANAGE_WAREHOUSE)
+    await state.update_data(flow=flow, cart=[], lite=lite)
     await _show_categories(message, t, state, warehouse, edit=False)
 
 
@@ -305,7 +333,7 @@ async def pick_category(callback: CallbackQuery, callback_data: WhCb, t: Dict[st
         flow = (await state.get_data()).get("flow", FLOW_IN)
         await state.update_data(q="", np_cat_hint=cats[callback_data.i])
         await _show(callback.message, t["wh_cat_empty"].format(cat=escape(cat_label(cats[callback_data.i], _lang(t)))),
-                    kb.search_kb(t, [], flow in (FLOW_IN, FLOW_OUT)), True)
+                    kb.search_kb(t, [], flow in (FLOW_IN, FLOW_OUT) and not data.get("lite")), True)
         return
     await _show_products_page(callback.message, t, state, 0)
 
@@ -350,7 +378,7 @@ async def search_text(message: Message, t: Dict[str, str], state: FSMContext,
     q = normalize(query).replace(" ", "")
     hits = [n for n in names if q and q in normalize(n).replace(" ", "")]
     hits.sort(key=lambda n: (len(n), n.casefold()))
-    allow_new = flow in (FLOW_IN, FLOW_OUT)
+    allow_new = flow in (FLOW_IN, FLOW_OUT) and not data.get("lite")
     if hits:
         hits = hits[:8]
         text = t["wh_results"].format(query=escape(query))
@@ -413,7 +441,7 @@ async def _start_item(target: Message, t: Dict[str, str], state: FSMContext, pro
         await state.update_data(view="pick")
         await _show(target, t["wh_out_zero"].format(name=escape(product.name), unit=escape(product.unit),
                                                    stock=_n(max(_available(data, cur), 0))),
-                    kb.zero_stock_kb(t), edit)
+                    kb.zero_stock_kb(t, to_inflow=not data.get("lite")), edit)
         return
     if flow == FLOW_IN and product.pack > 1:
         await _show_mode(target, t, state, edit)
@@ -499,7 +527,7 @@ async def enter_qty(message: Message, t: Dict[str, str], state: FSMContext,
         await state.set_state(WhSt.over)
         if avail <= 0:
             await message.answer(t["wh_out_zero"].format(name=escape(cur["name"]), unit=escape(cur["unit"]),
-                                                         stock=_n(0)), reply_markup=kb.zero_stock_kb(t))
+                                                         stock=_n(0)), reply_markup=kb.zero_stock_kb(t, to_inflow=not data.get("lite")))
             return
         await message.answer(t["wh_out_over"].format(avail=_n(avail), qty=_n(value), unit=escape(cur["unit"]),
                                                      name=escape(cur["name"])),
@@ -2346,7 +2374,8 @@ async def _krm_colors(target: Message, t: Dict[str, str], state: FSMContext, war
     await state.set_state(WhSt.krm_color)
     await state.update_data(krm_size=size, krm_opts=names, opts=names, view="pick")
     text = t["wh_krm_colors" if items else "wh_krm_colors_empty"].format(size=size)
-    await _show(target, text, kb.kromka_colors_kb(t, _krm_labels(t, items, size), size), edit)
+    lite = bool((await state.get_data()).get("lite"))
+    await _show(target, text, kb.kromka_colors_kb(t, _krm_labels(t, items, size), size, allow_new=not lite), edit)
 
 
 async def _krm_new_prompt(target: Message, t: Dict[str, str], state: FSMContext, warehouse: WarehouseService,

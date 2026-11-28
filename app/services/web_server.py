@@ -116,6 +116,10 @@ class DashboardService:
         self._cache: Dict[Tuple, RawData] = {}
         self._locks: Dict[Tuple, asyncio.Lock] = {}
 
+    def clear(self) -> None:
+        """Har qanday yozishdan keyin (cache_bus): keyingi /dashboard so'rovi yangi raqamlarni hisoblaydi."""
+        self._cache.clear()
+
     def today(self) -> date:
         return datetime.now(self._tz).date()
 

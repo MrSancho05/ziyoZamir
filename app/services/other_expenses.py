@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from gspread.exceptions import WorksheetNotFound
 from gspread.utils import ValueInputOption, ValueRenderOption, rowcol_to_a1
 
+from app.services import cache_bus
 from app.services.sheets import SheetsClient
 from app.services.warehouse import _cell, _find_col, _header_index, clean_text, num_out, parse_number, to_date
 
@@ -44,6 +45,10 @@ class OtherExpense:
     description: str
     amount: float
     who: str
+    row: int = 0                 # varaqdagi qator raqami (1 dan)
+
+    def expect(self) -> Dict[str, object]:
+        return {"row": self.row, "iso": self.day.isoformat(), "amount": self.amount, "description": self.description}
 
 
 @dataclass
@@ -97,15 +102,66 @@ class OtherExpensesService:
         c = self._cols(values[h])
         out = []
         year = date.today().year
-        for row in values[h + 1:]:
+        for i, row in enumerate(values[h + 1:], start=h + 2):
             amount = parse_number(_cell(row, c["sum"]))
             day = to_date(_cell(row, c["date"]), year)
             if not amount or day is None:
                 continue
             out.append(OtherExpense(day=day, category=str(_cell(row, c["cat"])).strip(),
                                     description=str(_cell(row, c["desc"])).strip(), amount=amount,
-                                    who=str(_cell(row, c["who"])).strip()))
+                                    who=str(_cell(row, c["who"])).strip(), row=i))
         return out
+
+    def reset_cache(self) -> None:
+        self._ts = 0.0
+
+    def _locate(self, expect: Dict[str, object]) -> Tuple[object, OtherExpense]:
+        ws = self._ws()
+        rows = self._read_sync()
+        def same(r: OtherExpense) -> bool:
+            return (r.day.isoformat() == expect.get("iso") and abs(r.amount - float(expect.get("amount") or 0)) < 1e-6
+                    and r.description == expect.get("description"))
+        hit = next((r for r in rows if r.row == int(expect.get("row") or 0) and same(r)), None)
+        if hit is None:
+            matches = [r for r in rows if same(r)]
+            if len(matches) != 1:
+                raise LookupError("other expense row moved")
+            hit = matches[0]
+        return ws, hit
+
+    def _delete_sync(self, expect: Dict[str, object]) -> OtherExpense:
+        ws, r = self._locate(expect)
+        self._sheets.spreadsheet.batch_update({"requests": [{"deleteDimension": {"range": {
+            "sheetId": ws.id, "dimension": "ROWS", "startIndex": r.row - 1, "endIndex": r.row}}}]})
+        return r
+
+    async def delete(self, expect: Dict[str, object]) -> OtherExpense:
+        r = await self._sheets.run(self._delete_sync, expect)
+        self._ts = 0.0
+        cache_bus.invalidate_all()
+        return r
+
+    def _update_sync(self, expect: Dict[str, object], fields: Dict[str, object]) -> OtherExpense:
+        """fields: amount, category, description, iso."""
+        ws, r = self._locate(expect)
+        values = ws.get_all_values()
+        h = _header_index(values, "Категория", "Сумма") if values else 0
+        c = self._cols(values[h] if values else HEADERS)
+        data = []
+        for key, col, conv in (("iso", "date", str), ("category", "cat", str),
+                               ("description", "desc", lambda v: clean_text(str(v), 200)),
+                               ("amount", "sum", lambda v: num_out(float(v)))):
+            if key in fields and c.get(col) is not None:
+                data.append({"range": rowcol_to_a1(r.row, c[col] + 1), "values": [[conv(fields[key])]]})
+        if data:
+            ws.batch_update(data, value_input_option=ValueInputOption.user_entered)
+        return r
+
+    async def update(self, expect: Dict[str, object], fields: Dict[str, object]) -> OtherExpense:
+        r = await self._sheets.run(self._update_sync, expect, fields)
+        self._ts = 0.0
+        cache_bus.invalidate_all()
+        return r
 
     async def rows(self, force: bool = False) -> List[OtherExpense]:
         if force or time.monotonic() - self._ts > CACHE_TTL:
@@ -135,6 +191,7 @@ class OtherExpensesService:
     async def add(self, day: date, category: str, description: str, amount: float, who: str) -> int:
         row = await self._sheets.run(self._add_sync, day, category, description, amount, who)
         self._ts = 0.0
+        cache_bus.invalidate_all()
         return row
 
     async def summary(self, start: date, end: date) -> OtherSummary:

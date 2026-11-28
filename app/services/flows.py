@@ -119,6 +119,19 @@ class FlowsService:
             await self._store.save_snapshot(key, day.isoformat(), d.digest, d.rows)
         return deltas
 
+    async def resync_day(self, day: date) -> None:
+        """O'tgan (yoki bugungi) kundagi qator tahrirlangan / o'chirilganda: shu kunning saqlangan yozuvlari
+        (Dashboard, hisobotlar) varaqdan qayta yoziladi."""
+        for key in KEYS:
+            values = await self._sheets.run(self._read, key)
+            if values is None:
+                continue
+            table = analyze(norm_rows(values))
+            if table.cols.get("date") is None:
+                continue
+            rows = [row_info(table.header, table.cols, r) for r in rows_for_day(table, day)]
+            await self._store.replace_rows(key, day.isoformat(), [(r.label, r.qty, r.amount) for r in rows])
+
     async def rebuild_history(self, before: date) -> dict[str, int]:
         """Saqlangan kunlik yozuvlarni (flow_rows) varaqning o'zidan qayta quradi: `before` dan oldingi har bir
         sana uchun shu sanadagi to'liq qatorlar. Eski (noto'g'ri o'qilgan) summalar va keyin qo'shilgan tarix

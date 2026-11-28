@@ -10,7 +10,9 @@ from app.config import load_settings
 from app.handlers import router
 from app.middlewares.access import AccessMiddleware
 from app.services.access import check_admins_reachable
+from app.services import cache_bus
 from app.services.ai_agent import AIAgent
+from app.storage.audit import AuditLog
 from app.services.attendance import AttendanceService
 from app.services.flows import FlowsService
 from app.services.jobs import OpsScheduler
@@ -108,8 +110,9 @@ async def main() -> None:
     if settings.gemini_api_key:
         try:
             ai_agent = AIAgent(settings.gemini_api_key, settings.gemini_model, settings.timezone, warehouse=warehouse,
-                               flows=flows, shop=shop, attendance=attendance, pending=pending)
-            logging.info("AI yordamchi yoqildi: %s", settings.gemini_model)
+                               flows=flows, shop=shop, attendance=attendance, pending=pending,
+                               fallback_model=settings.gemini_fallback_model)
+            logging.info("AI yordamchi yoqildi: %s (zaxira: %s)", settings.gemini_model, settings.gemini_fallback_model)
         except Exception:
             logging.exception("AI yordamchini ishga tushirib bo'lmadi (bot usiz ishlaydi)")
     else:
@@ -117,7 +120,7 @@ async def main() -> None:
 
     dp = Dispatcher(repo=repo, store=store, sheets=sheets, settings=settings, attendance=attendance,
                     shop=shop, pending=pending, att_store=att_store, flows=flows,
-                    warehouse=warehouse, report_cache=report_cache, ai_agent=ai_agent)
+                    warehouse=warehouse, report_cache=report_cache, ai_agent=ai_agent, audit=AuditLog(db))
 
     # outer_middleware: handler topilmasa ham ishlaydi, shuning uchun
     # ruxsatsiz odam hech qaysi xabar bilan o'tib keta olmaydi
@@ -151,6 +154,10 @@ async def main() -> None:
     # 📊 Jonli Dashboard: polling bilan bir jarayonda (aiohttp). Port band bo'lsa ham bot ishlayveradi
     dashboard = DashboardService(shop=shop, flows=flows, attendance=attendance, warehouse=warehouse,
                                  tz=settings.timezone)
+    # 3 qatlamli kesh: har qanday yozishdan keyin ombor, «Прочие расходы» va Dashboard birga tozalanadi
+    cache_bus.register(warehouse.reset_caches)
+    cache_bus.register(warehouse.other.reset_cache)
+    cache_bus.register(dashboard.clear)
     web_server = WebServer(create_app(dashboard, make_authorizer(settings.bot_token, repo)),
                            settings.webapp_host, settings.webapp_port)
     if set_webapp_url(settings.webapp_url):         # takroriy chaqiruv xavfsiz

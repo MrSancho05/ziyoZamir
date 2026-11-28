@@ -1,4 +1,5 @@
 from aiogram import Bot, F, Router
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from app.keyboards.callbacks import LangCb
@@ -12,7 +13,8 @@ from app.storage.users import UserRepository
 router = Router(name="language")
 
 
-@router.message(F.text.in_(all_texts("btn_lang")))
+@router.message(Command("lang"))
+@router.message(F.text.in_(all_texts("btn_lang")))       # eski 🌐 tugmasi telefonda qolib ketgan bo'lsa
 async def ask_language(message: Message, t: dict[str, str]) -> None:
     await message.answer(t["choose_language"], reply_markup=language_kb())
 
