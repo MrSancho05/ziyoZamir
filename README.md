@@ -10,7 +10,8 @@
      `GEMINI_PRIMARY_MODEL` (standart `gemini-3.5-flash`, `GEMINI_MODEL` ham qabul qilinadi) va
      `GEMINI_FALLBACK_MODEL` (standart `gemini-3.5-flash-lite`: asosiy model 429 / 503 / 404 bersa).
      Kalit bo'lmasa yordamchi o'chiq, bot avvalgidek ishlaydi.
-     Boss / Admin / Sklad / Usta (faol rol bo'yicha); ishchiga yopiq. Faqat zavod ishiga oid savollar.
+     FAQAT Admin (faol roli Admin bo'lganda; 🎭 boshqa rolni sinayotganda va boshqa rollarda — o'chiq).
+     Faqat zavod ishiga oid savollar.
      Barcha yozish / tahrirlash / o'chirish — karta orqali, «✅ Tasdiqlash» bosilgandagina.
      Batafsil: [docs/AI_VOICE_GUIDE_UZ.md](docs/AI_VOICE_GUIDE_UZ.md).
 3. Buyruqlar (alohida-alohida):

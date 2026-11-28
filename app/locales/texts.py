@@ -1869,3 +1869,24 @@ _V12_TEXTS = {
 }
 for _lang, _texts in _V12_TEXTS.items():
     TEXTS[_lang].update(_texts)
+
+
+# ---------------- 🤖 AI yordamchi faqat Admin uchun: boshqa rollar yordamida ovoz / AI tilga olinmaydi ----------------
+_V13_TEXTS = {
+    "uz": {
+        "caps_admin": "👤 <b>Admin sifatida siz (🤖 AI yordamchi — matn va 🎙 ovoz):</b>\n• 📥 Kirim va 📤 Chiqim — bitta xabarda bir nechta tovar (karta ✅ bilan tasdiqlanadi)\n• 🗂 Bugungi va o'tgan kunlardagi Kirim, Chiqim, 🏪 do'kon va 🧾 boshqa xarajatlarni tahrirlash / o'chirish\n• 📦 Mahsulot qo'shish, nomini o'zgartirish, o'chirish, ⚖️ qoldiq, 💰 narx, 👷 ustalar, 📏 birliklar\n• 📊 Qoldiq, tanqis, ombor qiymati, xarajatlar, davomat va maosh tahlili\n• 👥 Foydalanuvchilar va 🎭 Rolni sinash",
+        "caps_storekeeper": "📦 <b>Sklad nazoratchisi sifatida siz:</b>\n• 📥 Kirim va 📤 Chiqim — menyu tugmalari orqali\n• 📦 Mahsulotlar: qo'shish, tahrirlash, ⚖️ qoldiq, 💰 narx, 👷 ustalar, 📏 birliklar\n• 🗂 Yozuvlarni tahrirlash / o'chirish (📦 Mahsulotlar menyusida)\n• 📝 Yo'qlama, 🏪 Do'kon xarajati va 🧾 Boshqa xarajatlar\n• 📊 Qoldiqlar; mahsulot nomini yozsangiz — darhol uning kartasi",
+        "caps_boss": "📈 <b>Boss sifatida siz:</b>\n• 📊 Qoldiqlar va tanqis tovarlar\n• 🔎 Davomat tahlili va 📈 Xarajat tahlili\n• Kunlik, haftalik va oylik hisobotlar (📊 Jonli Dashboard)\n• Mahsulot nomini yozsangiz — darhol uning qoldig'i",
+        "caps_master": "👷 <b>Usta sifatida siz:</b>\n• 📊 Qoldiqlar va ⚠️ tanqis tovarlarni ko'rish\n• 📤 Chiqim — menyu tugmasi orqali (savatni ✅ bilan tasdiqlaysiz)\n• 🌐 Til: «Tilni rus tiliga o'zgartir» deb yozing yoki /lang",
+        "caps_ai_tail": "🤖 Savolingizni yozing yoki 🎙 ovozli xabar yuboring — AI yordamchi faqat Admin uchun. Til: «Tilni rus tiliga o'zgartir» yoki /lang.",
+    },
+    "ru": {
+        "caps_admin": "👤 <b>Как администратор вы можете (🤖 AI-помощник — текст и 🎙 голос):</b>\n• 📥 Приход и 📤 Расход — несколько товаров в одном сообщении (подтверждение ✅ на карточке)\n• 🗂 Исправлять / удалять приход, расход, 🏪 магазин и 🧾 прочие расходы за сегодня и прошлые дни\n• 📦 Добавлять, переименовывать, удалять товары, ⚖️ остаток, 💰 цены, 👷 мастера, 📏 единицы\n• 📊 Остатки, дефицит, стоимость склада, расходы, посещаемость и зарплата\n• 👥 Пользователи и 🎭 Тест роли",
+        "caps_storekeeper": "📦 <b>Как кладовщик вы можете:</b>\n• 📥 Приход и 📤 Расход — кнопками меню\n• 📦 Товары: добавить, изменить, ⚖️ остаток, 💰 цены, 👷 мастера, 📏 единицы\n• 🗂 Исправить / удалить записи (в меню 📦 Товары)\n• 📝 Посещаемость, 🏪 Расход магазина и 🧾 Прочие расходы\n• 📊 Остатки; напишите название товара — сразу его карточка",
+        "caps_boss": "📈 <b>Как руководитель вы можете:</b>\n• 📊 Остатки и дефицит\n• 🔎 Анализ посещаемости и 📈 Анализ расходов\n• Ежедневные, недельные и месячные отчёты (📊 Живой Dashboard)\n• Напишите название товара — сразу его остаток",
+        "caps_master": "👷 <b>Как мастер вы можете:</b>\n• 📊 Смотреть остатки и ⚠️ дефицитные товары\n• 📤 Расход — кнопкой меню (подтверждаете корзину ✅)\n• 🌐 Язык: напишите «Смени язык на узбекский» или /lang",
+        "caps_ai_tail": "🤖 Напишите вопрос или отправьте 🎙 голосовое — AI-помощник только для администратора. Язык: «Смени язык на узбекский» или /lang.",
+    },
+}
+for _lang, _texts in _V13_TEXTS.items():
+    TEXTS[_lang].update(_texts)

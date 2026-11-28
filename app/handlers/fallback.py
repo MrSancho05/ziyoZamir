@@ -184,7 +184,7 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
 
     Faol jarayon (FSM holati) bo'lmasa:
     - mahsulot nomi (aniq / qism-so'z) — sklad / admin / boss uchun darhol mahsulot kartasi;
-    - savol, gap, xato yozilgan nom, ovozli xabar, rasm — 🤖 AI yordamchi (GEMINI_API_KEY bo'lsa).
+    - savol, gap, xato yozilgan nom, ovozli xabar, rasm — 🤖 AI yordamchi (FAQAT Admin, GEMINI_API_KEY bo'lsa).
     Qolganlarga: tushuntirib, menyuni hozirgi rolga moslab yangilaymiz."""
     if user is None:
         return
@@ -194,7 +194,7 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
         if code:
             await _switch_language(message, user, code, repo)
             return
-    # 🤖 faqat Boss / Admin / Sklad (faol rol bo'yicha); ishchiga Gemini umuman chaqirilmaydi
+    # 🤖 FAQAT faol roli Admin bo'lganda (🎭 boshqa rolni sinayotgan admin va boshqa rollar — 0 token)
     ai_on = bool(ai_agent is not None and getattr(ai_agent, "enabled", False) and not in_flow
                  and ai_allowed(user.role))
     if ai_on and (message.voice or message.photo):
@@ -213,9 +213,6 @@ async def unknown_message(message: Message, t: dict[str, str], user: User | None
             if res == "ai":
                 await _ask_ai(message, t, user, state, ai_agent, repo)
                 return
-        elif ai_on:
-            await _ask_ai(message, t, user, state, ai_agent, repo)   # 👷 usta: narxli kartalar o'rniga AI
-            return
     logger.info("Handler topilmadi: user_id=%s role=%s text=%r",
                 user.id, user.role.value if user.role else None, message.text)
     await message.answer(t["unknown_command"], reply_markup=main_menu_kb(t, user.role, user.real_role))

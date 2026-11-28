@@ -4,13 +4,12 @@ Modellar: asosiy (standart `gemini-3.5-flash`) va zaxira (standart `gemini-3.5-f
 503 / 404 qaytarsa — xuddi shu so'rov (suhbat tarixi va vositalar bilan) zaxira modelda darhol qayta yuboriladi.
 «Band» xabari faqat IKKALA model ham 429 qaytarsa.
 
-Kim foydalanadi: Boss, Admin, Sklad nazoratchisi va Usta (faol rol bo'yicha, 🎭 Rolni sinash ham). Ishchi —
-Gemini umuman chaqirilmaydi.
-- Usta: qoldiq va tanqislar (narxsiz), 📤 Chiqim qoralamasi.
-- Boss: faqat o'qish va tahlil.
-- Admin / Sklad: o'qish + barcha yozish / tahrirlash / o'chirish — FAQAT qoralama orqali: foydalanuvchi
-  «✅ Tasdiqlash» ni bosgandan keyin `app/handlers/ai_confirm.py` botning yozish funksiyalarini chaqiradi.
+Kim foydalanadi: FAQAT Admin — faol roli ADMIN bo'lganda. 🎭 Rolni sinash bilan boshqa rolga o'tgan admin,
+Boss, Sklad nazoratchisi, Usta va Ishchi uchun Gemini umuman chaqirilmaydi (0 token).
+- Admin: o'qish va tahlil + barcha yozish / tahrirlash / o'chirish — FAQAT qoralama orqali: «✅ Tasdiqlash»
+  bosilgandan keyin `app/handlers/ai_confirm.py` botning yozish funksiyalarini chaqiradi.
 - Til almashtirish (`change_language`) — tasdiqlashsiz, darhol.
+- Qoralama yasovchi vositalarni 🗂 menyu (Admin va Sklad) ham ishlatadi: `run_tool(..., trusted=True)` — Gemini siz.
 Bir xabarda bir nechta amal (zanjir): 6 tagacha vosita bosqichi. Faqat zavod ishi (boshqa mavzular — 1 jumla
 bilan rad). Tejash: max_output_tokens=450, 4 ta xabarlik xotira (10 daqiqa), 1–2 belgili xabarlarga API yo'q.
 Python 3.9+ bilan mos (google-genai>=1.0.0)."""
@@ -50,11 +49,7 @@ FALLBACK_CODES = (429, 503, 404)
 MAX_ANSWER = 3800
 MAX_RANGE_DAYS = 366
 
-AI_ROLES = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER, Role.MASTER)
-EXEC_ROLES = (Role.ADMIN, Role.BOSS, Role.STOREKEEPER)            # pul, narx, tahlil
-WRITE_ROLES = (Role.ADMIN, Role.STOREKEEPER)
-OUTFLOW_ROLES = WRITE_ROLES + (Role.MASTER,)
-PRICE_ROLES = EXEC_ROLES
+AI_ROLES = (Role.ADMIN,)          # AI faqat faol roli Admin bo'lganda (🎭 boshqa rolda — o'chiq)
 
 
 class AgentBusy(Exception):
@@ -182,12 +177,8 @@ def _perm(*perms: Permission) -> Callable[[Optional[Role]], bool]:
     return lambda role: ai_allowed(role) and any(has_permission(role, p) for p in perms)
 
 
-def _roles(*roles: Role) -> Callable[[Optional[Role]], bool]:
-    return lambda role: role in roles
-
-
 def _writer(perm: Permission) -> Callable[[Optional[Role]], bool]:
-    return lambda role: role in WRITE_ROLES and has_permission(role, perm)
+    return lambda role: ai_allowed(role) and has_permission(role, perm)
 
 
 @dataclass
@@ -233,7 +224,7 @@ class AIAgent:
         day = {"type": S, "description": "Sana YYYY-MM-DD (kiritilmasa — bugun)"}
         kind = {"type": S, "description": "inflow (Приход) | outflow (Расход) | other (Прочие расходы) | shop (Магазин)"}
         read_stock = _perm(Permission.VIEW_DEFICIT)
-        execs = _roles(*EXEC_ROLES)
+        execs = ai_allowed
         return [
             # ---- hamma AI rollari ----
             Tool("change_language", "Foydalanuvchi tilini darhol almashtirish (tasdiqlashsiz).",
@@ -267,7 +258,7 @@ class AIAgent:
                  "(sana bo'lmasa — bugungilar, bo'lmasa oxirgilar). Natijadagi `row` raqami draft_edit_entry / "
                  "draft_delete_entry uchun kerak. shop uchun sana kerak.",
                  {"kind": kind, "product": {"type": S, "description": "Mahsulot yoki izoh (ixtiyoriy)"}, "date": day},
-                 ["kind"], _roles(*WRITE_ROLES), self._t_find),
+                 ["kind"], _writer(Permission.MANAGE_WAREHOUSE), self._t_find),
             # ---- yozish: faqat qoralama, foydalanuvchi ✅ bosadi ----
             Tool("draft_inflow", "📥 Kirim (Приход) qoralamasi (har bir mahsulot uchun alohida chaqiring). Miqdor "
                  "dona/birlikda yoki karobkada (unit_mode=box). Narx aytilmasa — oxirgi narx olinadi; «narxsiz» "
@@ -283,7 +274,7 @@ class AIAgent:
                  {"product": product, "quantity": {"type": N, "description": "Miqdor (birlikda)"},
                   "recipient": {"type": S, "description": "Oluvchi usta (Ответственный)"},
                   "purpose": {"type": S, "description": "Buyurtma / sex / izoh (ixtiyoriy)"}},
-                 ["product", "quantity", "recipient"], _roles(*OUTFLOW_ROLES), self._w_outflow, True),
+                 ["product", "quantity", "recipient"], _writer(Permission.MAKE_OUTFLOW), self._w_outflow, True),
             Tool("draft_edit_entry", "✏️ Bugungi yoki o'tgan kundagi yozuvni tahrirlash (avval find_entries). "
                  "inflow: quantity, price_per_unit, party (do'kon), date; outflow: quantity, party (oluvchi), purpose, "
                  "date; other: amount, category, description, date. Do'kon (shop) uchun draft_shop_expense.",
@@ -356,12 +347,9 @@ class AIAgent:
 
     @staticmethod
     def _product_row(p, role: Optional[Role] = None) -> Dict[str, Any]:
-        row = {"name": p.name, "category": p.category, "unit": p.unit, "stock": _r(p.stock),
-               "min_norm": _r(p.min_stock), "low": bool(p.is_low), "pack": _r(p.pack)}
-        if role in PRICE_ROLES:                       # 👷 ustaga narx va pul ko'rsatilmaydi
-            row["avg_price_sum"] = _r(p.avg_price)
-            row["stock_value_sum"] = _r(p.value or p.stock * p.avg_price)
-        return row
+        return {"name": p.name, "category": p.category, "unit": p.unit, "stock": _r(p.stock),
+                "min_norm": _r(p.min_stock), "low": bool(p.is_low), "pack": _r(p.pack),
+                "avg_price_sum": _r(p.avg_price), "stock_value_sum": _r(p.value or p.stock * p.avg_price)}
 
     async def _resolve(self, query: str):
         """(Product | None, nomzodlar). Aniq / qism-so'z / o'xshash; bir nechta bo'lsa — nomzodlar."""
@@ -927,9 +915,11 @@ class AIAgent:
         card = t["ai_d_dir_add" if add else "ai_d_dir_del"].format(kind=label, value=html.escape(hit or val))
         return self._draft(ctx, "dir_add" if add else "dir_del", {"dk": dk, "value": hit or val}, card)
 
-    async def run_tool(self, name: str, args: Dict[str, Any], ctx: Ctx) -> Any:
+    async def run_tool(self, name: str, args: Dict[str, Any], ctx: Ctx, trusted: bool = False) -> Any:
+        """trusted=True — faqat 🗂 menyu (router o'zi MANAGE_WAREHOUSE ni tekshiradi): Gemini chaqirilmaydi,
+        faqat qoralama yasaladi; bajarish baribir ai_confirm dagi ruxsat tekshiruvidan o'tadi."""
         tool = self._tools.get(name)
-        if tool is None or not tool.allow(ctx.role):
+        if tool is None or not (tool.allow(ctx.role) or (trusted and tool.write)):
             return {"error": "tool not allowed for this role"}
         allowed = {k: v for k, v in (args or {}).items() if k in tool.params}
         try:
@@ -946,25 +936,17 @@ class AIAgent:
         t = get_texts(lang)
         refusal = t["ai_offtopic"]
         language = "Russian" if lang == "ru" else "Uzbek (Latin script)"
-        caps = _plain(t.get(f"caps_{role.value}", "")) if role else ""
-        if role in WRITE_ROLES:
-            rights = ("This user MAY create, edit and delete records (today or past dates), but ONLY via draft_* "
-                      "tools; nothing is saved until the user presses ✅ Tasdiqlash on each card. Never claim something "
-                      "is saved. To edit or delete: call find_entries first, then use the exact `row`. If several rows "
-                      "match, list them briefly (date, qty, party) and ask which one. For compound commands call "
-                      "several tools in a row (one draft per item). If a tool returns an error (missing supplier / "
-                      "recipient / reason, ambiguous product, not enough stock), ask ONE short question.")
-        elif role == Role.MASTER:
-            rights = ("This user is a Master (Usta): may only view stock / low stock (NO prices, NO money) and create "
-                      "outflow drafts (draft_outflow). For anything else (inflow, prices, catalog, expenses, editing "
-                      "or deleting records, reports) say politely that it is not available for their role.")
-        else:
-            rights = ("This user is the Boss: READ-ONLY analytics. If asked to record, edit or delete anything, "
-                      "politely say that only the Admin and the Storekeeper record operations.")
+        caps = _plain(t.get("caps_admin", ""))
+        rights = ("The user is the Admin. They MAY create, edit and delete records (today or past dates), but ONLY "
+                  "via draft_* tools; nothing is saved until they press ✅ Tasdiqlash on each card. Never claim "
+                  "something is saved. To edit or delete: call find_entries first, then use the exact `row`. If "
+                  "several rows match, list them briefly (date, qty, party) and ask which one. For compound commands "
+                  "call several tools in a row (one draft per item). If a tool returns an error (missing supplier / "
+                  "recipient / reason, ambiguous product, not enough stock), ask ONE short question.")
         return (
             "You are the voice & text assistant of the «Ziyo Zamir MCHJ» furniture factory Telegram bot. "
             f"Today: {today.isoformat()} ({today.strftime('%A')}), timezone Asia/Tashkent. "
-            f"User role: {role.value if role else 'unknown'}. Reply in {language}; if the user writes in another "
+            f"Reply in {language}; if the user writes in another "
             "language, reply in that language.\n"
             "DOMAIN LOCK: answer ONLY about this factory's work: warehouse stock, inflows/outflows (Приход/Расход), "
             "product catalog and prices, store expenses (Do'kon xarajati), other operational expenses (Прочие "
@@ -972,8 +954,7 @@ class AIAgent:
             "else (general chat, weather, news, jokes, coding, recipes, personal advice, politics, translations, math "
             f"homework, etc.) do not answer it and reply with exactly this one sentence and nothing more: {refusal}\n"
             "HELP: if the user asks what they can do, asks for help ('yordam', 'nima qila olaman', 'qanday "
-            "ishlataman', 'помощь') or seems unsure, reply with ONLY these 4-6 short bullets for their role (never "
-            f"mention features of other roles):\n{caps}\n"
+            f"ishlataman', 'помощь') or seems unsure, reply with ONLY these 4-6 short bullets:\n{caps}\n"
             "LANGUAGE: if the user asks to switch the language, call change_language at once.\n"
             "Get every number ONLY from the tools; never invent data; if not found, say so. Money in so'm with "
             "space thousands (1 250 000). Resolve 'today', 'yesterday', 'this week', 'last month' from today. Be brief: "

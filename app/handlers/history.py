@@ -227,7 +227,7 @@ async def delete_row(callback: CallbackQuery, t: Dict[str, str], user: User, sta
     await callback.answer("⏳")
     b = _builder_for(warehouse, shop, pending, settings)
     ctx = _ctx(user, t)
-    res = await b.run_tool("draft_delete_entry", {"kind": KINDS[kind], "row": r["row"]}, ctx)
+    res = await b.run_tool("draft_delete_entry", {"kind": KINDS[kind], "row": r["row"]}, ctx, trusted=True)
     await _deliver(callback.message, t, state, ctx, res)
 
 
@@ -268,7 +268,7 @@ async def edit_value(message: Message, t: Dict[str, str], user: User, state: FSM
         args["amount"] = message.text.strip()
     b = _builder_for(warehouse, shop, pending, settings)
     ctx = _ctx(user, t)
-    res = await b.run_tool("draft_edit_entry", args, ctx)
+    res = await b.run_tool("draft_edit_entry", args, ctx, trusted=True)
     await _deliver(message, t, state, ctx, res)
 
 
@@ -290,7 +290,7 @@ async def shop_date(message: Message, t: Dict[str, str], user: User, state: FSMC
         return
     b = _builder_for(warehouse, shop, pending, settings)
     ctx = _ctx(user, t)
-    res = await b.run_tool("draft_delete_entry", {"kind": "shop", "date": day.isoformat()}, ctx)
+    res = await b.run_tool("draft_delete_entry", {"kind": "shop", "date": day.isoformat()}, ctx, trusted=True)
     await _deliver(message, t, state, ctx, res)
 
 
@@ -303,5 +303,5 @@ async def shop_reason(message: Message, t: Dict[str, str], user: User, state: FS
         return
     b = _builder_for(warehouse, shop, pending, settings)
     ctx = _ctx(user, t)
-    res = await b.run_tool("draft_delete_entry", {"kind": "shop", "date": iso, "reason": message.text[:200]}, ctx)
+    res = await b.run_tool("draft_delete_entry", {"kind": "shop", "date": iso, "reason": message.text[:200]}, ctx, trusted=True)
     await _deliver(message, t, state, ctx, res)

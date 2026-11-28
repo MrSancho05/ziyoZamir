@@ -65,7 +65,7 @@ def role_help_text(t: Dict[str, str], role: Optional[Role]) -> str:
     """Faqat faol rolga ruxsat etilgan amallar (yuqori rollarning yashirin imkoniyatlari aytilmaydi)."""
     role = role or Role.WORKER
     text = t[f"caps_{role.value}"]
-    if role != Role.WORKER:
+    if role == Role.ADMIN:                          # 🤖 AI yordamchi faqat adminda
         text += "\n\n" + t["caps_ai_tail"]
     return text
 

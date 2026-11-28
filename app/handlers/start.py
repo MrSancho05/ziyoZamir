@@ -18,8 +18,8 @@ async def cmd_start(message: Message, t: dict[str, str], user: User, repo: UserR
     text = t["welcome"].format(name=escape(user.full_name), role=t[f"role_{user.role.value}"])
     if user.role in (Role.WORKER, None):
         text += "\n\n" + t["caps_worker"]                 # ishchi: 2 qatorli qisqa yo'riqnoma
-    else:
-        text += "\n\n" + t["caps_ai_tail"]
+    elif user.role == Role.ADMIN:
+        text += "\n\n" + t["caps_ai_tail"]                # 🤖 AI yordamchi faqat adminda
     await message.answer(text, reply_markup=main_menu_kb(t, user.role, user.real_role))
 
     # Admin botga kirganda kutayotgan so'rovlar haqida eslatiladi
