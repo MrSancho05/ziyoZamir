@@ -105,7 +105,7 @@ async def open_menu(message: Message, t: Dict[str, str], state: FSMContext, ware
 async def _ask_cat(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
     await state.set_state(ExSt.cat)
     lang = _lang(t)
-    buttons = [_b(uz if lang != "ru" else ru, "cat", i) for i, (_c, uz, ru) in enumerate(DEFAULT_CATEGORIES)]
+    buttons = [_b(category_label(c, lang), "cat", i) for i, (c, _uz, _ru) in enumerate(DEFAULT_CATEGORIES)]
     await _show(target, t["ox_cat_prompt"], _kb(buttons, [_nav(t)]), edit)
 
 

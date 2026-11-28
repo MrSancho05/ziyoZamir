@@ -32,6 +32,8 @@ from app.services import kromka
 from app.services.categories import label as cat_label
 from app.services.categories import suggest as suggest_category
 from app.services.drafts import DRAFT_TTL, DRAFTS, Draft, DraftStore  # noqa: F401  (Draft — tashqi importlar uchun)
+from app.services.i18n_names import (contains_any, exact_any, fuzzy_any, localize_product_name,
+                                     localize_unit, pn, pu)
 from app.services.search import exact_match, normalize, search_products
 from app.services.shop_grid import parse_shop_amount
 
@@ -132,6 +134,12 @@ def _clean(value: Any, limit: int = 120) -> str:
     return s[:limit]
 
 
+def _neg(lang: str, name: str, stock: Any, unit: str, qty: Any) -> str:
+    """❌ Qoldiq manfiy bo'lib qolishi — foydalanuvchi tilida (karta yaratilmaydi)."""
+    return get_texts(lang)["neg_stock_block"].format(product=localize_product_name(name, lang), stock=_n(max(stock, 0)),
+                                                     unit=localize_unit(unit, lang), qty=_n(qty))
+
+
 def _plain(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
@@ -228,7 +236,8 @@ class AIAgent:
         return [
             # ---- hamma AI rollari ----
             Tool("change_language", "Foydalanuvchi tilini darhol almashtirish (tasdiqlashsiz).",
-                 {"language": {"type": S, "description": "uz yoki ru"}}, ["language"], ai_allowed, self._t_lang),
+                 {"language": {"type": S, "description": "uz (o'zbek lotin), cyrl (ўзбек кирилл) yoki ru"}},
+                 ["language"], ai_allowed, self._t_lang),
             # ---- o'qish ----
             Tool("search_products", "Ombordagi mahsulotni nomi bo'yicha qidirish: qoldiq, birlik, kategoriya, "
                  "Мин. остаток, tanqisligi (ruxsat bo'lsa narx).", {"query": {"type": S, "description": "Nom"}},
@@ -346,8 +355,10 @@ class AIAgent:
         return start, end
 
     @staticmethod
-    def _product_row(p, role: Optional[Role] = None) -> Dict[str, Any]:
-        return {"name": p.name, "category": p.category, "unit": p.unit, "stock": _r(p.stock),
+    def _product_row(p, lang: str = "uz") -> Dict[str, Any]:
+        return {"name": p.name, "display_name": localize_product_name(p.name, lang),
+                "display_unit": localize_unit(p.unit, lang), "category": cat_label(p.category, lang) if p.category else "",
+                "unit": p.unit, "stock": _r(p.stock),
                 "min_norm": _r(p.min_stock), "low": bool(p.is_low), "pack": _r(p.pack),
                 "avg_price_sum": _r(p.avg_price), "stock_value_sum": _r(p.value or p.stock * p.avg_price)}
 
@@ -356,12 +367,10 @@ class AIAgent:
         catalog = await self._wh.catalog(force=True)
         names = [p.name for p in catalog]
         by = {p.name: p for p in catalog}
-        exact = exact_match(query, names)
+        exact = exact_match(query, names) or exact_any(query, names)        # uz / кирилл / рус
         if exact:
             return by[exact], []
-        q = normalize(query).replace(" ", "")
-        hits = sorted((n for n in names if q and q in normalize(n).replace(" ", "")), key=len)
-        hits = hits or search_products(query, names, limit=3)
+        hits = sorted(contains_any(query, names), key=len) or fuzzy_any(query, names, limit=3)
         if len(hits) == 1:
             return by[hits[0]], []
         return None, hits[:6]
@@ -369,9 +378,13 @@ class AIAgent:
     # ---- til ----
     async def _t_lang(self, ctx: Ctx, language: str = "") -> Any:
         code = str(language or "").strip().lower()[:2]
-        code = {"ру": "ru", "uz": "uz", "ru": "ru", "o'": "uz", "ўз": "uz", "уз": "uz"}.get(code, code)
-        if code not in ("uz", "ru"):
-            return {"error": "language must be uz or ru"}
+        raw = str(language or "").strip().lower()
+        if raw.startswith(("cyr", "kir", "кир", "kr")):
+            code = "cyrl"
+        else:
+            code = {"ру": "ru", "uz": "uz", "ru": "ru", "o'": "uz", "ўз": "uz", "уз": "uz", "lo": "uz"}.get(code, code)
+        if code not in ("uz", "ru", "cyrl"):
+            return {"error": "language must be uz (Latin), cyrl (Uzbek Cyrillic) or ru"}
         ctx.new_lang = code
         return {"status": "language_changed", "language": code,
                 "note": "Reply with one short confirmation sentence in the NEW language."}
@@ -380,14 +393,13 @@ class AIAgent:
     async def _t_search(self, ctx: Ctx, query: str = "") -> Any:
         catalog = await self._wh.catalog()
         names = [p.name for p in catalog]
-        q = normalize(query).replace(" ", "")
-        hits = [n for n in names if q and q in normalize(n).replace(" ", "")][:10] or search_products(query, names, 5)
+        hits = contains_any(query, names)[:10] or fuzzy_any(query, names, 5)
         by = {p.name: p for p in catalog}
-        return {"matches": [self._product_row(by[n], ctx.role) for n in hits if n in by]}
+        return {"matches": [self._product_row(by[n], ctx.lang) for n in hits if n in by]}
 
     async def _t_low(self, ctx: Ctx) -> Any:
         low = sorted(await self._wh.low_items(), key=lambda p: p.stock / (p.min_stock or 1))
-        return {"count": len(low), "items": [self._product_row(p, ctx.role) for p in low[:40]]}
+        return {"count": len(low), "items": [self._product_row(p, ctx.lang) for p in low[:40]]}
 
     async def _t_category(self, ctx: Ctx, category: str = "") -> Any:
         catalog = await self._wh.catalog()
@@ -399,7 +411,7 @@ class AIAgent:
         k = normalize(category)
         items = [p for p in catalog if k and k in normalize(p.category or "")]
         return {"category": category, "count": len(items),
-                "items": [self._product_row(p, ctx.role) for p in items[:60]]}
+                "items": [self._product_row(p, ctx.lang) for p in items[:60]]}
 
     async def _t_value(self, ctx: Ctx) -> Any:
         by: Dict[str, float] = {}
@@ -490,9 +502,9 @@ class AIAgent:
         return out
 
     @staticmethod
-    def _entry_json(e) -> Dict[str, Any]:
-        out = {"row": e.row, "date": e.day.isoformat() if e.day else "", "name": e.name, "qty": _r(e.qty),
-               "party": e.party}
+    def _entry_json(e, lang: str = "uz") -> Dict[str, Any]:
+        out = {"row": e.row, "date": e.day.isoformat() if e.day else "", "name": e.name,
+               "display_name": localize_product_name(e.name, lang), "qty": _r(e.qty), "party": e.party}
         if e.kind == "in":
             out.update(unit=e.unit, price=_r(e.price) if e.price else 0)
         else:
@@ -523,7 +535,7 @@ class AIAgent:
         kind = (kind or "").strip().lower()
         if kind in ("inflow", "outflow"):
             entries = await self._entries(kind, product, day)
-            return {"kind": kind, "count": len(entries), "entries": [self._entry_json(e) for e in entries]}
+            return {"kind": kind, "count": len(entries), "entries": [self._entry_json(e, ctx.lang) for e in entries]}
         if kind == "other":
             rows = (await self._other_rows(product, day))[:10]
             return {"kind": kind, "entries": [{"row": r.row, "date": r.day.isoformat(), "category": r.category,
@@ -544,6 +556,9 @@ class AIAgent:
         ctx.drafts.append(d)
         return {"status": "awaiting_user_confirmation", "draft_id": d.id,
                 "note": "Saved NOT yet. The user must press ✅ Tasdiqlash on the card."}
+
+    async def _resolve_any(self, query: str):
+        return await self._resolve(query)
 
     async def _need_product(self, query: str):
         p, cands = await self._resolve(query)
@@ -578,10 +593,10 @@ class AIAgent:
             from app.services.warehouse import SUPPLIER
             return {"error": "supplier required", "known_suppliers": await self._wh.top_names(SUPPLIER, 8)}
         boxes = f" ({_n(q)} {t['wh_unit_box']} × {_n(p.pack)})" if box else ""
-        cur = "сум" if ctx.lang == "ru" else "so'm"
-        price_text = (f"{_n(price)} {cur} · {'итого' if ctx.lang == 'ru' else 'jami'} {_n(price * qty)}"
+        cur = t["es_cur"]
+        price_text = (f"{_n(price)} {cur} · {t['ai_total_word']} {_n(price * qty)}"
                       + (" (🔁)" if last_used else "")) if price else t["wh_price_later_mark"]
-        card = t["ai_d_inflow"].format(name=html.escape(p.name), qty=_n(qty), unit=html.escape(p.unit), boxes=boxes,
+        card = t["ai_d_inflow"].format(name=pn(ctx.lang, p.name), qty=_n(qty), unit=pu(ctx.lang, p.unit), boxes=boxes,
                                        price=price_text, supplier=html.escape(supplier))
         res = self._draft(ctx, "inflow", {"name": p.name, "unit": p.unit, "qty": qty, "price": price,
                                           "supplier": supplier, "boxes": q if box else 0.0, "pack": p.pack}, card)
@@ -602,13 +617,13 @@ class AIAgent:
                        if d.kind == "outflow" and d.payload.get("name") == p.name)
         available = p.stock - reserved
         if qty > available + 1e-9:
-            return {"error": "insufficient_stock", "stock": _r(available), "unit": p.unit}
+            return {"error": "insufficient_stock", "stock": _r(available), "unit": p.unit, "message": _neg(ctx.lang, p.name, available, p.unit, qty)}
         recipient = _clean(recipient, 60)
         if not recipient:
             from app.services.warehouse import RECIPIENT
             return {"error": "recipient required", "known_recipients": await self._wh.top_names(RECIPIENT, 8)}
         purpose = _clean(purpose, 100)
-        card = t["ai_d_outflow"].format(name=html.escape(p.name), qty=_n(qty), unit=html.escape(p.unit),
+        card = t["ai_d_outflow"].format(name=pn(ctx.lang, p.name), qty=_n(qty), unit=pu(ctx.lang, p.unit),
                                         stock=_n(available), after=_n(available - qty), who=html.escape(recipient),
                                         purpose=html.escape(purpose) or "—")
         return self._draft(ctx, "outflow", {"name": p.name, "unit": p.unit, "qty": qty, "recipient": recipient,
@@ -637,10 +652,12 @@ class AIAgent:
             if q is not None:
                 if q <= 0:
                     return {"error": "quantity must be > 0 (to remove the row use draft_delete_entry)"}
-                if kind == "outflow" and q > e.qty:
-                    p = await self._wh.product(e.name, force=True)
-                    if p is not None and q - e.qty > p.stock + 1e-9:
-                        return {"error": "insufficient_stock", "stock": _r(p.stock)}
+                p = await self._wh.product(e.name, force=True)        # yangi (keshsiz) qoldiq
+                if kind == "outflow" and q > e.qty and p is not None and q - e.qty > p.stock + 1e-9:
+                    return {"error": "insufficient_stock", "stock": _r(p.stock), "unit": p.unit, "message": _neg(ctx.lang, e.name, p.stock, p.unit, q - e.qty)}
+                if kind == "inflow" and q < e.qty and p is not None and p.stock - (e.qty - q) < -1e-9:
+                    # kirimni kamaytirish qoldiqni manfiy qiladi
+                    return {"error": "insufficient_stock", "stock": _r(p.stock), "unit": p.unit, "message": _neg(ctx.lang, e.name, p.stock, p.unit, e.qty - q)}
                 fields["qty"] = q
                 changes.append(t["ai_ch_qty"].format(old=_n(e.qty), new=_n(q)))
             if kind == "inflow" and price_per_unit is not None and _num(price_per_unit) is not None:
@@ -662,7 +679,7 @@ class AIAgent:
             if not fields:
                 return {"error": "nothing to change"}
             card = t["ai_d_edit_in" if kind == "inflow" else "ai_d_edit_out"].format(
-                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=html.escape(e.name),
+                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=pn(ctx.lang, e.name),
                 changes="\n".join(changes))
             return self._draft(ctx, "edit_in" if kind == "inflow" else "edit_out",
                                {"expect": e.expect(), "fields": fields, "name": e.name}, card)
@@ -709,10 +726,14 @@ class AIAgent:
             e = await self._find_entry(kind, row)
             if e is None:
                 return {"error": "row not found — call find_entries again"}
-            cur = "сум" if ctx.lang == "ru" else "so'm"
+            if kind == "inflow":                              # kirimni o'chirish qoldiqni manfiy qilmasin
+                p = await self._wh.product(e.name, force=True)
+                if p is not None and p.stock - e.qty < -1e-9:
+                    return {"error": "insufficient_stock", "stock": _r(p.stock), "unit": p.unit, "message": _neg(ctx.lang, e.name, p.stock, p.unit, e.qty)}
+            cur = t["es_cur"]
             card = t["ai_d_del_in" if kind == "inflow" else "ai_d_del_out"].format(
-                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=html.escape(e.name),
-                qty=_n(e.qty), unit=html.escape(e.unit), party=html.escape(e.party or "—"),
+                date=e.day.strftime("%d.%m.%Y") if e.day else "—", row=e.row, name=pn(ctx.lang, e.name),
+                qty=_n(e.qty), unit=pu(ctx.lang, e.unit), party=html.escape(e.party or "—"),
                 purpose=html.escape(e.purpose or "—"),
                 price=f"{_n(e.price)} {cur}" if e.price else t["wh_price_later_mark"])
             return self._draft(ctx, "del_in" if kind == "inflow" else "del_out",
@@ -800,7 +821,7 @@ class AIAgent:
         p, err = await self._need_product(product)
         if err:
             return err
-        card = t["ai_d_del_product"].format(name=html.escape(p.name), stock=_n(p.stock), unit=html.escape(p.unit))
+        card = t["ai_d_del_product"].format(name=pn(ctx.lang, p.name), stock=_n(p.stock), unit=pu(ctx.lang, p.unit))
         return self._draft(ctx, "del_product", {"name": p.name}, card)
 
     async def _w_adjust(self, ctx: Ctx, product: str = "", delta: Any = None) -> Any:
@@ -812,9 +833,9 @@ class AIAgent:
         if not d:
             return {"error": "delta must be non-zero (+N or -N)"}
         if p.stock + d < -1e-9:
-            return {"error": "stock would become negative", "stock": _r(p.stock)}
-        card = t["ai_d_adjust"].format(name=html.escape(p.name), stock=_n(p.stock), after=_n(p.stock + d),
-                                       unit=html.escape(p.unit), delta=("+" if d > 0 else "−") + _n(abs(d)))
+            return {"error": "insufficient_stock", "stock": _r(p.stock), "unit": p.unit, "message": _neg(ctx.lang, p.name, p.stock, p.unit, abs(d))}
+        card = t["ai_d_adjust"].format(name=pn(ctx.lang, p.name), stock=_n(p.stock), after=_n(p.stock + d),
+                                       unit=pu(ctx.lang, p.unit), delta=("+" if d > 0 else "−") + _n(abs(d)))
         return self._draft(ctx, "adjust", {"name": p.name, "unit": p.unit, "delta": d}, card)
 
     async def _w_price(self, ctx: Ctx, product: str = "", price_per_unit: Any = None, date: str = "") -> Any:
@@ -843,7 +864,7 @@ class AIAgent:
             return {"error": "several unpriced inflows, ask which date",
                     "entries": [{"date": r.day.isoformat() if r.day else "", "qty": _r(r.qty)} for r in mine]}
         r = mine[0]
-        card = t["ai_d_price"].format(name=html.escape(r.name), qty=_n(r.qty), unit=html.escape(r.unit),
+        card = t["ai_d_price"].format(name=pn(ctx.lang, r.name), qty=_n(r.qty), unit=pu(ctx.lang, r.unit),
                                       date=r.day.strftime("%d.%m.%Y") if r.day else "—", price=_n(price),
                                       total=_n(price * r.qty))
         return self._draft(ctx, "price", {"row": r.row, "name": r.name, "qty": r.qty,
@@ -935,7 +956,8 @@ class AIAgent:
         today = self.today()
         t = get_texts(lang)
         refusal = t["ai_offtopic"]
-        language = "Russian" if lang == "ru" else "Uzbek (Latin script)"
+        language = {"ru": "Russian", "cyrl": "Uzbek in CYRILLIC script (Ўзбек кирилл ёзуви)"}.get(
+            lang, "Uzbek in LATIN script (o'zbek lotin)")
         caps = _plain(t.get("caps_admin", ""))
         rights = ("The user is the Admin. They MAY create, edit and delete records (today or past dates), but ONLY "
                   "via draft_* tools; nothing is saved until they press ✅ Tasdiqlash on each card. Never claim "
@@ -956,6 +978,9 @@ class AIAgent:
             "HELP: if the user asks what they can do, asks for help ('yordam', 'nima qila olaman', 'qanday "
             f"ishlataman', 'помощь') or seems unsure, reply with ONLY these 4-6 short bullets:\n{caps}\n"
             "LANGUAGE: if the user asks to switch the language, call change_language at once.\n"
+            "Product names: tool results include `display_name` in the user's language — ALWAYS show display_name "
+            "(never the raw sheet name unless asked). If a tool result contains `message`, relay it to the user "
+            "verbatim.\n"
             "Get every number ONLY from the tools; never invent data; if not found, say so. Money in so'm with "
             "space thousands (1 250 000). Resolve 'today', 'yesterday', 'this week', 'last month' from today. Be brief: "
             "at most 6 short lines or bullets, plain text, **bold** allowed.\n" + rights)

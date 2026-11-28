@@ -34,6 +34,9 @@ CACHE_TTL = 60.0
 def category_label(name: str, lang: str) -> str:
     for canon, uz, ru in DEFAULT_CATEGORIES:
         if canon.casefold() == str(name).strip().casefold():
+            if lang == "cyrl":
+                from app.locales.translit import latin_to_cyrillic
+                return latin_to_cyrillic(uz)
             return ru if lang == "ru" else uz
     return f"🧾 {name}" if name else "🧾 —"
 

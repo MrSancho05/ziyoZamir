@@ -60,10 +60,10 @@ def _short(text: str, limit: int = 24) -> str:
 
 
 def language_kb() -> InlineKeyboardMarkup:
-    return _kb([[
-        _btn("O'zbekcha 🇺🇿", LangCb(code="uz")),
-        _btn("Русский 🇷🇺", LangCb(code="ru")),
-    ]])
+    """3 ta til: O'zbekcha (lotin), Ўзбекча (кирилл), Русский."""
+    return _kb([[_btn("🇺🇿 O'zbekcha (Lotin)", LangCb(code="uz"))],
+                [_btn("🇺🇿 Ўзбекча (Кирилл)", LangCb(code="cyrl"))],
+                [_btn("🇷🇺 Русский", LangCb(code="ru"))]])
 
 
 def inspect_menu_kb(t: dict[str, str]) -> InlineKeyboardMarkup:

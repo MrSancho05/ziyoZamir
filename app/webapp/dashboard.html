@@ -254,8 +254,41 @@
       partial: "Часть данных не удалось прочитать", ms: "мс", sub: "Ziyo Zamir MCHJ · панель руководителя",
       mln: "млн", mlrd: "млрд", ming: "тыс", days: "дн", items: "шт" },
   };
-  const L = I18N[LANG];
-  document.documentElement.lang = LANG;
+  // Ўзбекча (кирилл): o'zbek lotin matnlaridan qoidaviy transliteratsiya (bot bilan bir xil qoidalar)
+  function toCyrl(s) {
+    const map = { a: "а", b: "б", d: "д", e: "е", f: "ф", g: "г", h: "ҳ", i: "и", j: "ж", k: "к", l: "л", m: "м",
+      n: "н", o: "о", p: "п", q: "қ", r: "р", s: "с", t: "т", u: "у", v: "в", x: "х", y: "й", z: "з", c: "с", w: "в" };
+    const di = [["o'", "ў"], ["g'", "ғ"], ["sh", "ш"], ["ch", "ч"], ["yo", "ё"], ["yu", "ю"], ["ya", "я"], ["ye", "е"]];
+    const keep = /^(PDF|CSV|AI|ID|Dashboard)$/;
+    return String(s).replace(/[A-Za-z][A-Za-z'‘’ʻ`]*/g, (w) => {
+      if (keep.test(w)) return w;
+      const lw = w.toLowerCase().replace(/[‘’ʻ`]/g, "'");
+      let out = "";
+      for (let i = 0; i < lw.length;) {
+        const up = w[i] !== w[i].toLowerCase();
+        let piece = null;
+        for (const [lat, cyr] of di) { if (lw.startsWith(lat, i)) { piece = cyr; i += 2; break; } }
+        if (piece === null) {
+          const ch = lw[i];
+          if (ch === "'") piece = (i > 0 && i + 1 < lw.length) ? "ъ" : "'";
+          else if (ch === "e" && (i === 0 || "aeiou".includes(lw[i - 1]))) piece = "э";
+          else piece = map[ch] || w[i];
+          i += 1;
+        }
+        out += up ? piece.charAt(0).toUpperCase() + piece.slice(1) : piece;
+      }
+      return out;
+    });
+  }
+  function deepCyrl(v) {
+    if (typeof v === "string") return toCyrl(v);
+    if (Array.isArray(v)) return v.map(deepCyrl);
+    if (v && typeof v === "object") { const o = {}; for (const k in v) o[k] = deepCyrl(v[k]); return o; }
+    return v;
+  }
+  I18N.cyrl = deepCyrl(I18N.uz);
+  const L = I18N[LANG] || I18N.uz;
+  document.documentElement.lang = LANG === "cyrl" ? "uz-Cyrl" : LANG;
 
   // ---------- Telegram + mavzu ----------
   function applyTheme() {

@@ -12,6 +12,7 @@ from datetime import date
 from html import escape
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services.i18n_names import pn, pu
 from app.locales.texts import month_name, weekday_short
 from app.services.attendance_grid import PeriodStats
 from app.services.flows import FlowDelta, FlowSummary
@@ -160,14 +161,14 @@ def _wh_detail(t: Dict[str, str], lang: str, d: DigestData) -> str:
         lines.append(t[head].format(count=s.count, amount=fmt_money(s.amount)))
         if s.top:
             lines.append(t[top_key])
-            lines += [t["dg_wh_top_line"].format(name=escape(name), qty=_qty(q), amount=fmt_money(a))
+            lines += [t["dg_wh_top_line"].format(name=pn(t, name), qty=_qty(q), amount=fmt_money(a))
                       for name, q, a in s.top]
         lines.append("")
     if d.stock_value is not None:
         lines.append(t["dg_wh_stock_full"].format(value=_money(d.stock_value)))
     if d.low:
         lines += ["", t["dg_wh_low_title"].format(n=len(d.low))]
-        lines += [t["dg_wh_low_line"].format(name=escape(p.name), stock=_qty(p.stock), unit=escape(p.unit),
+        lines += [t["dg_wh_low_line"].format(name=pn(t, p.name), stock=_qty(p.stock), unit=pu(t, p.unit),
                                              min=_qty(p.min_stock)) for p in d.low[:20]]
         if len(d.low) > 20:
             lines.append(f"… +{len(d.low) - 20}")
@@ -221,7 +222,7 @@ def pdf_lines(t: Dict[str, str], lang: str, d: DigestData) -> List[str]:
 def render_flows_daily(t: Dict[str, str], day: date, deltas: Dict[str, FlowDelta], detail: str,
                        unpriced: Sequence[UnpricedRow]) -> Dict[str, str]:
     """Qisqacha (narxi yo'q tovarlar ogohlantirishi tepada) va batafsil."""
-    warn = [t["fd_unpriced_warn"].format(item=escape(r.name)) for r in unpriced[:5]]
+    warn = [t["fd_unpriced_warn"].format(item=pn(t, r.name)) for r in unpriced[:5]]
     if len(unpriced) > 5:
         warn.append(t["fd_unpriced_more"].format(n=len(unpriced) - 5))
     lines = [t["fd_brief_title"].format(date=day.strftime("%d.%m.%Y")), ""]
@@ -234,7 +235,7 @@ def render_flows_daily(t: Dict[str, str], day: date, deltas: Dict[str, FlowDelta
     ins = deltas.get("inflow")
     top = sorted((r for r in (ins.new_rows if ins else []) if r.amount), key=lambda r: -(r.amount or 0))[:3]
     if top:
-        lines.append(t["fd_brief_top"].format(items=", ".join(escape(r.label or r.text) for r in top)))
+        lines.append(t["fd_brief_top"].format(items=", ".join((pn(t, r.label) if r.label else escape(r.text)) for r in top)))
     full = "\n".join(warn + [""] + [detail]) if warn else detail
     return {"brief": "\n".join(lines), "detail": fit_message(full, t["an_truncated"])}
 
@@ -347,17 +348,17 @@ def render_exec_summary(t: Dict[str, str], lang: str, d: ExecDay) -> Dict[str, s
             for r in sorted(rows, key=lambda r: -(r.amount or 0))[:8]:
                 qty = f" — {_qty(r.qty)}" if r.qty is not None else ""
                 amount = f" · {fmt_money(r.amount)} " + t["es_cur"] if r.amount else ""
-                lines.append(f"• {escape(r.label or r.text)}{qty}{amount}")
+                lines.append(f"• {(pn(t, r.label) if r.label else escape(r.text))}{qty}{amount}")
             if len(rows) > 8:
                 lines.append(f"… +{len(rows) - 8}")
     if d.unpriced_today or d.unpriced_total:
         lines += ["", t["es_unpriced"].format(n=d.unpriced_total)]
-        lines += [t["fd_unpriced_warn"].format(item=escape(r.name)) for r in d.unpriced_today[:5]]
+        lines += [t["fd_unpriced_warn"].format(item=pn(t, r.name)) for r in d.unpriced_today[:5]]
     if d.stock_value is not None:
         lines += ["", t["dg_wh_stock_full"].format(value=_money(d.stock_value))]
     if d.low:
         lines += [t["dg_wh_low_title"].format(n=len(d.low))]
-        lines += [t["dg_wh_low_line"].format(name=escape(p.name), stock=_qty(p.stock), unit=escape(p.unit),
+        lines += [t["dg_wh_low_line"].format(name=pn(t, p.name), stock=_qty(p.stock), unit=pu(t, p.unit),
                                              min=_qty(p.min_stock)) for p in d.low[:10]]
         if len(d.low) > 10:
             lines.append(f"… +{len(d.low) - 10}")
@@ -425,11 +426,11 @@ def _new_block(t: Dict[str, str], items: Sequence[Any]) -> List[str]:
         if not p.first_qty:
             first = t["dg_new_nofirst"]
         elif p.first_price:
-            first = t["dg_new_first"].format(qty=_qty(p.first_qty), unit=escape(p.unit), price=_money(p.first_price))
+            first = t["dg_new_first"].format(qty=_qty(p.first_qty), unit=pu(t, p.unit), price=_money(p.first_price))
         else:
-            first = t["dg_new_first_noprice"].format(qty=_qty(p.first_qty), unit=escape(p.unit))
-        lines.append(t["dg_new_item"].format(name=escape(p.name), cat=escape(cat_label(p.category, lang) or "—"),
-                                             unit=escape(p.unit), min=_qty(p.min_stock), who=escape(p.user_name or "—"),
+            first = t["dg_new_first_noprice"].format(qty=_qty(p.first_qty), unit=pu(t, p.unit))
+        lines.append(t["dg_new_item"].format(name=pn(t, p.name), cat=escape(cat_label(p.category, lang) or "—"),
+                                             unit=pu(t, p.unit), min=_qty(p.min_stock), who=escape(p.user_name or "—"),
                                              day=p.day[8:10] + "." + p.day[5:7], first=first))
     if len(items) > 20:
         lines.append(f"… +{len(items) - 20}")
@@ -443,7 +444,7 @@ def _unpriced_block(t: Dict[str, str], items: Sequence[Any], today: date) -> Lis
     lines = ["", t["dg_unp_title"].format(count=len(items))]
     for i, it in enumerate(items[:20], start=1):
         day = it.entry_date
-        lines.append(t["dg_unp_item"].format(i=i, name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
+        lines.append(t["dg_unp_item"].format(i=i, name=pn(t, it.product_name), qty=_qty(it.qty), unit=pu(t, it.unit),
                                              date=f"{day[8:10]}.{day[5:7]}.{day[0:4]}" if len(day) >= 10 else day,
                                              days=it.days_open(today), r=it.reminder_count))
     if len(items) > 20:
@@ -461,12 +462,12 @@ def unpriced_reminder_text(t: Dict[str, str], items: Sequence[Any], today: date,
     lines = [head, ""]
     if fresh:
         lines.append(t["wh_unp_today"].format(n=len(fresh)))
-        lines += [f"• {escape(it.product_name)} — {_qty(it.qty)} {escape(it.unit)}" for it in fresh[:15]]
+        lines += [f"• {pn(t, it.product_name)} — {_qty(it.qty)} {pu(t, it.unit)}" for it in fresh[:15]]
     if late:
         if fresh:
             lines.append("")
         lines.append(t["wh_unp_late"].format(n=len(late)))
-        lines += [t["wh_unp_late_line"].format(name=escape(it.product_name), qty=_qty(it.qty), unit=escape(it.unit),
+        lines += [t["wh_unp_late_line"].format(name=pn(t, it.product_name), qty=_qty(it.qty), unit=pu(t, it.unit),
                                                date=it.entry_date[8:10] + "." + it.entry_date[5:7] + "." + it.entry_date[:4],
                                                days=it.days_open(today)) for it in late[:15]]
     lines += ["", t["unp_tail"]]

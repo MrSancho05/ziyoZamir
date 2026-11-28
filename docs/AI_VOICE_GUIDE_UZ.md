@@ -21,6 +21,36 @@ kerak bo'lsa yozuv tayyorlaydi.
 - **Yordam:** «Yordam», «Nima qila olaman?» — admin imkoniyatlari 4–6 qatorda. `/help` ham shuni ko'rsatadi.
 - **Til:** «Tilni rus tiliga o'zgartir», «O'zbek tiliga o'tkaz» (matn yoki ovoz) yoki `/lang`.
 
+## 🌐 3 til: O'zbekcha (lotin), Ўзбекча (кирилл), Русский
+
+- Til tanlash: `/lang` → **🇺🇿 O'zbekcha (Lotin)**, **🇺🇿 Ўзбекча (Кирилл)**, **🇷🇺 Русский**.
+- Matn yoki ovoz bilan: «Tilni rus tiliga o'zgartir», «Kirill yozuviga o'tkaz», «Lotin yozuviga qaytar»,
+  «Смени язык на русский».
+- **Mahsulot nomlari, birliklar va kategoriyalar** tanlangan tilda ko'rsatiladi (jadvaldagi asl nomlar
+  o'zgarmaydi — formulalar buzilmaydi):
+
+| Jadvalda (ru) | O'zbekcha (lotin) | Ўзбекча (кирилл) |
+|---|---|---|
+| Петля накладная (прямая) — шт | Ustki petlya (to'g'ri) — dona | Устки петля (тўғри) — дона |
+| Крючок мебельный — шт | Mebel ilgagi — dona | Мебел илгаги — дона |
+| Кромка ПВХ 1×19 — рулон | Kromka PVX 1×19 — rulon | Кромка ПВХ 1×19 — рулон |
+| Крепеж / Метизы | Mix va Samorezlar | Мих ва Саморезлар |
+
+- Qidiruvda istalgan yozuvda yozish mumkin: «Ustki petlya», «Устки петля» yoki «Петля накладная» — bot bir xil
+  mahsulotni topadi. AI yordamchi ham sizning tilingiz va yozuvingizda javob beradi.
+
+## ❌ Qoldiq hech qachon 0 dan pastga tushmaydi
+
+- Har qanday **📤 Chiqim**, **⚖️ qoldiqni kamaytirish**, **o'tgan kirimni o'chirish yoki kamaytirish** oldidan bot
+  qoldiqni Google Sheets dan **yangidan** o'qiydi. Qoldiq manfiy bo'lib qolsa — amal **bajarilmaydi** (karta ham
+  chiqmaydi) va shunday xabar keladi:
+  *«❌ Mumkin emas! «{mahsulot}» omborda faqat 5 dona mavjud. 8 dona chiqim qilinsa qoldiq manfiy (-son) bo'lib
+  qoladi. Qoldiq minimal 0 ga tushishi mumkin!»*
+- «✅ Tasdiqlash» bosilganda ham qoldiq yana tekshiriladi (shu orada o'zgargan bo'lishi mumkin).
+- **Google Sheets ning o'zida** ham himoya bor: «Расход» → Количество va «Приход» → Количество ustunlariga
+  qo'lda qoldiqni manfiy qiladigan son kiritilsa, jadval uni **rad etadi**. «Остатки и Расходы» → «Остаток на
+  складе» (formulali ustun) qo'lda o'zgartirilmoqchi bo'lsa — ogohlantirish chiqadi.
+
 ## 📥 Kirim (Приход)
 
 | Misol | Izoh |

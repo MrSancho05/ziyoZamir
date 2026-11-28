@@ -55,6 +55,14 @@ def _n(x: Any) -> str:
     return s.replace(",", " ")
 
 
+def _neg(t: Dict[str, str], product, qty: float) -> str:
+    from app.services.i18n_names import localize_product_name, localize_unit
+    lang = t.get("lang_code", "uz")
+    return t["neg_stock_block"].format(product=escape(localize_product_name(product.name, lang)),
+                                       stock=_n(max(product.stock, 0)), unit=escape(localize_unit(product.unit, lang)),
+                                       qty=_n(qty))
+
+
 def allowed(user: User, draft: Draft) -> bool:
     perm = KIND_PERMISSION.get(draft.kind)
     return perm is not None and has_permission(user.role, perm)
@@ -129,7 +137,7 @@ async def execute(draft: Draft, t: Dict[str, str], user: User, warehouse, flows,
 
     if kind == "outflow":
         if p["qty"] > product.stock + 1e-9:
-            raise DraftFailed(t["ai_fail_stock"].format(stock=_n(product.stock), unit=escape(product.unit)))
+            raise DraftFailed(_neg(t, product, abs(float(p.get("qty") or p.get("delta") or 0))))
         await warehouse.save_outflow([OutflowItem(name=p["name"], unit=p["unit"], qty=p["qty"],
                                                   purpose=p.get("purpose", ""), recipient=p["recipient"],
                                                   stock_before=product.stock)])
@@ -144,7 +152,7 @@ async def execute(draft: Draft, t: Dict[str, str], user: User, warehouse, flows,
     if kind == "adjust":
         delta = float(p["delta"])
         if product.stock + delta < -1e-9:
-            raise DraftFailed(t["ai_fail_stock"].format(stock=_n(product.stock), unit=escape(product.unit)))
+            raise DraftFailed(_neg(t, product, abs(float(p.get("qty") or p.get("delta") or 0))))
         if delta > 0:
             await warehouse.save_inflow([InflowItem(name=p["name"], unit=p["unit"], qty=delta,
                                                     price=product.avg_price or None, supplier=ADJ_IN_NOTE)])
@@ -160,6 +168,17 @@ async def execute(draft: Draft, t: Dict[str, str], user: User, warehouse, flows,
     if kind in ("del_in", "del_out", "edit_in", "edit_out"):
         expect = p["expect"]
         old_day = _day(expect.get("iso", ""))
+        if kind in ("del_in", "edit_in"):
+            # kirimni o'chirish / kamaytirish: qoldiq 0 dan pastga tushmasin (keshsiz o'qish)
+            prod = await warehouse.product(p["name"], force=True)
+            old_qty = float(expect.get("qty") or 0)
+            fields = p.get("fields") or {}
+            if kind == "del_in":
+                removed = old_qty                                   # butun kirim olib tashlanadi
+            else:
+                removed = old_qty - float(fields["qty"]) if "qty" in fields else 0.0
+            if prod is not None and removed > 0 and prod.stock - removed < -1e-9:
+                raise DraftFailed(_neg(t, prod, removed))
         try:
             if kind.startswith("del"):
                 await warehouse.delete_entry(expect)
@@ -170,7 +189,7 @@ async def execute(draft: Draft, t: Dict[str, str], user: User, warehouse, flows,
                     prod = await warehouse.product(p["name"], force=True)
                     extra = float(fields["qty"]) - float(expect.get("qty") or 0)
                     if prod is not None and extra > prod.stock + 1e-9:
-                        raise DraftFailed(t["ai_fail_stock"].format(stock=_n(prod.stock), unit=escape(prod.unit)))
+                        raise DraftFailed(_neg(t, prod, extra))
                 await warehouse.update_entry(expect, fields)
                 detail = t["ai_done_edited"]
         except NotFoundError:

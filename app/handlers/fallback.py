@@ -18,6 +18,7 @@ from app.locales.texts import get_texts
 from app.services.ai_agent import AgentBusy, AgentCooldown, AgentDenied, ai_allowed, is_trivial
 from app.services.lang_switch import detect as detect_language_switch
 from app.services.categories import label as cat_label
+from app.services.i18n_names import contains_any, exact_any, fuzzy_any, pn, pu
 from app.services.search import exact_match, normalize, search_products
 
 logger = logging.getLogger(__name__)
@@ -64,16 +65,14 @@ async def _lookup(message: Message, t: dict[str, str], user: User, state: FSMCon
         logger.exception("Erkin qidiruv: katalogni o'qib bo'lmadi")
         return "ai" if ai_on else ""
     names = [p.name for p in catalog]
-    exact = exact_match(query, names)
+    exact = exact_match(query, names) or exact_any(query, names)       # uz / кирилл / рус
     if exact:
         hits: List[str] = [exact]
     else:
-        q = normalize(query).replace(" ", "")
-        hits = sorted((n for n in names if q and q in normalize(n).replace(" ", "")),
-                      key=lambda n: (len(n), n.casefold()))[:MAX_SHOWN]
+        hits = sorted(contains_any(query, names), key=lambda n: (len(n), n.casefold()))[:MAX_SHOWN]
         if not hits and ai_on:
             return "ai"                                 # xato yozilgan nom ham — AI search_products bilan topadi
-        hits = hits or search_products(query, names, limit=3)
+        hits = hits or fuzzy_any(query, names, limit=3)
     actions = user.role in ACTION_ROLES
     if not hits:
         if actions:
@@ -90,8 +89,8 @@ async def _lookup(message: Message, t: dict[str, str], user: User, state: FSMCon
         p = by_name[name]
         low = " ⚠️" if p.is_low else ""
         cards.append(t["wh_lookup_card"].format(
-            name=escape(p.name), cat=escape(cat_label(p.category, lang) if p.category else "—"),
-            stock=_n(p.stock), unit=escape(p.unit), min=_n(p.min_stock), price=_n(p.avg_price), low=low))
+            name=pn(t, p.name), cat=escape(cat_label(p.category, lang) if p.category else "—"),
+            stock=_n(p.stock), unit=pu(t, p.unit), min=_n(p.min_stock), price=_n(p.avg_price), low=low))
     head = t["wh_lookup_found"].format(text=escape(query), n=len(hits))
     if not actions:                                    # boss: bitta xabar, tugmasiz
         await message.answer(head + "\n\n" + "\n\n".join(cards))

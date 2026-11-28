@@ -1890,3 +1890,38 @@ _V13_TEXTS = {
 }
 for _lang, _texts in _V13_TEXTS.items():
     TEXTS[_lang].update(_texts)
+
+
+# ---------------- ❌ qoldiq manfiy bo'lmasin + 🇺🇿 Ўзбекча (кирилл) ----------------
+_V14_TEXTS = {
+    "uz": {
+        "neg_stock_block": "❌ Mumkin emas! «{product}» omborda faqat {stock} {unit} mavjud. {qty} {unit} chiqim qilinsa qoldiq manfiy (-son) bo'lib qoladi. Qoldiq minimal 0 ga tushishi mumkin!",
+        "ai_total_word": "jami",
+        "choose_language": "Iltimos, tilni tanlang / Илтимос, тилни танланг / Пожалуйста, выберите язык:",
+    },
+    "ru": {
+        "neg_stock_block": "❌ Невозможно! На складе «{product}» доступно только {stock} {unit}. При расходе {qty} {unit} остаток уйдет в минус. Минимальный остаток — 0!",
+        "ai_total_word": "итого",
+        "choose_language": "Iltimos, tilni tanlang / Илтимос, тилни танланг / Пожалуйста, выберите язык:",
+    },
+}
+for _lang, _texts in _V14_TEXTS.items():
+    TEXTS[_lang].update(_texts)
+
+# Ўзбекча (кирилл): o'zbek lotin matnlaridan qoidaviy transliteratsiya (HTML, {o'rinbosarlar}, /buyruqlar, rus
+# matni va kodlar o'zgarmaydi). Shu fayl OXIRIDA — barcha bloklar (TEXTS["uz"].update) qo'llanganidan keyin.
+from app.locales.translit import latin_to_cyrillic as _to_cyrl  # noqa: E402
+
+TEXTS["cyrl"] = {k: (_to_cyrl(v) if isinstance(v, str) else v) for k, v in TEXTS["uz"].items()}
+TEXTS["cyrl"].update({
+    "lang_code": "cyrl",
+    "lang_changed": "Тил ўзбекча (кирилл) га ўзгартирилди 🇺🇿",
+    "ai_lang_done": "✅ Тил ўзбекча (кирилл) га ўзгартирилди 🇺🇿",
+    "neg_stock_block": "❌ Мумкин эмас! «{product}» омборда фақат {stock} {unit} мавжуд. {qty} {unit} чиқим қилинса қолдиқ манфий (-сон) бўлиб қолади. Қолдиқ минимал 0 га тушиши мумкин!",
+    "choose_language": "Iltimos, tilni tanlang / Илтимос, тилни танланг / Пожалуйста, выберите язык:",
+    "ai_offtopic": "⚠️ Мен фақат Ziyo Zamir MCHJ омбори, харажатлари ва давомати бўйича ишга оид саволларга жавоб бераман.",
+})
+TEXTS["uz"]["lang_changed"] = "Til o'zbekcha (lotin) ga o'zgartirildi 🇺🇿"
+LANG_NAMES.update({"uz": "O'zbekcha (Lotin) 🇺🇿", "cyrl": "Ўзбекча (Кирилл) 🇺🇿", "ru": "Русский 🇷🇺"})
+for _table in (MONTHS, WEEKDAYS, SEASONS, WEEKDAYS_SHORT):
+    _table["cyrl"] = [_to_cyrl(x) for x in _table["uz"]]

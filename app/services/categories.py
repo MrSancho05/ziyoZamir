@@ -83,7 +83,15 @@ def label(name: str, lang: str) -> str:
     """Botda ko'rinadigan nom: standart kategoriya — foydalanuvchi tilida, boshqasi — aynan saqlangan nom."""
     d = default_of(name)
     if d is None:
+        # foydalanuvchi qo'shgan kategoriya: o'zbek tilida rus yozuvi ko'rsatilmaydi
+        if lang in ("uz", "cyrl") and re.search(r"[А-Яа-яЁё]", str(name)):
+            from app.locales.translit import latin_to_cyrillic, russian_to_latin
+            lat = russian_to_latin(name)
+            return latin_to_cyrillic(lat) if lang == "cyrl" else lat
         return name
+    if lang == "cyrl":
+        from app.locales.translit import latin_to_cyrillic
+        return latin_to_cyrillic(d.uz)
     return d.ru if lang == "ru" else d.uz
 
 
@@ -93,7 +101,11 @@ def examples(names: Sequence[str], lang: str) -> str:
     for n in names:
         d = default_of(n)
         if d is not None:
-            lines.append(f"{label(n, lang)} — {d.examples_ru if lang == 'ru' else d.examples_uz}")
+            ex = d.examples_ru if lang == "ru" else d.examples_uz
+            if lang == "cyrl":
+                from app.locales.translit import latin_to_cyrillic
+                ex = latin_to_cyrillic(ex)
+            lines.append(f"{label(n, lang)} — {ex}")
     return "\n".join(lines)
 
 

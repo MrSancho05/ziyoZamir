@@ -12,6 +12,7 @@ from app.keyboards.inline import deficit_menu_kb, inspect_menu_kb, pagination_kb
 from app.locales.texts import all_texts
 from app.models import DeficitItem, User
 from app.services.deficit import load_all_items
+from app.services.i18n_names import pn
 from app.services.webapp_menu import DASHBOARD_ROLES
 from app.services.sheets import SheetsClient
 from app.storage.memory import UserStore
@@ -54,7 +55,7 @@ def _build_page_text(items: list[DeficitItem], page: int, total_pages: int,
         + "----------------------------------------\n\n"
     )
     body = "\n\n".join(
-        f"{'⚠️' if i.is_deficit else '✅'} <b>{escape(i.name)}</b>\n"
+        f"{'⚠️' if i.is_deficit else '✅'} <b>{pn(t, i.name)}</b>\n"
         f"   {t['norm']}: {fmt_num(i.norm)} {t['unit']} | "
         f"{t['stock']}: {fmt_num(i.stock)} {t['unit']}"
         for i in items

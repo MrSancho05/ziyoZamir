@@ -32,6 +32,9 @@ from app.locales.texts import all_texts, get_texts, menu_texts
 from app.models import User
 from app.services import kromka
 from app.services.flows import FlowsService
+from app.services.i18n_names import names as loc_names
+from app.services.i18n_names import (contains_any, exact_any, fuzzy_any, localize_product_name, localize_unit,
+                                     pn, pu)
 from app.services.categories import examples as cat_examples
 from app.services.categories import label as cat_label
 from app.services.categories import suggest as suggest_category
@@ -172,7 +175,7 @@ def _cart_text(t: Dict[str, str], flow: str, cart: List[Dict[str, Any]]) -> str:
     total = 0.0
     used: Dict[str, float] = {}
     for i, it in enumerate(cart, start=1):
-        name, unit = escape(it["name"]), escape(it["unit"])
+        name, unit = pn(t, it["name"]), pu(t, it["unit"])
         if flow == FLOW_IN:
             box = f" ({_n(it['boxes'])} {t['wh_unit_box']})" if it.get("boxes") else ""
             if it.get("price"):
@@ -234,7 +237,7 @@ async def _show_products_page(target: Message, t: Dict[str, str], state: FSMCont
     cats = data.get("cats", [])
     cat = cats[data.get("cat", 0)] if cats and data.get("cat", 0) < len(cats) else ""
     text = t["wh_pick_cat"].format(cat=escape(cat_label(cat, _lang(t))), page=page + 1, pages=pages)
-    await _show(target, text, kb.products_kb(t, chunk, page, pages, offset=page * PAGE_SIZE), True)
+    await _show(target, text, kb.products_kb(t, loc_names(t, chunk), page, pages, offset=page * PAGE_SIZE), True)
 
 
 # ---------------- menyu tugmasi bosilganda: ochiq jarayon to'xtatiladi ----------------
@@ -369,21 +372,21 @@ async def search_text(message: Message, t: Dict[str, str], state: FSMContext,
         return
     await state.update_data(q=query, view="pick", np_cat_hint=None)
 
-    exact = exact_match(query, names)
+    # uch yozuvda: kanonik (rus), o'zbek lotin va kirill ko'rinishi — kanonik nomga qaytadi
+    exact = exact_match(query, names) or exact_any(query, names)
     if exact:
         await state.update_data(opts=[exact])
         await _pick(message, t, state, warehouse, exact, edit=False)
         return
 
-    q = normalize(query).replace(" ", "")
-    hits = [n for n in names if q and q in normalize(n).replace(" ", "")]
+    hits = contains_any(query, names)
     hits.sort(key=lambda n: (len(n), n.casefold()))
     allow_new = flow in (FLOW_IN, FLOW_OUT) and not data.get("lite")
     if hits:
         hits = hits[:8]
         text = t["wh_results"].format(query=escape(query))
     else:
-        hits = search_products(query, names, limit=3)
+        hits = fuzzy_any(query, names, limit=3)
         if not hits and allow_new:
             # hech narsa topilmadi: shu nom bilan darhol yangi mahsulot qo'shishni taklif qilamiz
             await state.update_data(opts=[])
@@ -391,7 +394,7 @@ async def search_text(message: Message, t: Dict[str, str], state: FSMContext,
             return
         text = (t["wh_did_you_mean"] if hits else t["wh_not_found"]).format(query=escape(query))
     await state.update_data(opts=hits)
-    await message.answer(text, reply_markup=kb.search_kb(t, hits, allow_new, query))
+    await message.answer(text, reply_markup=kb.search_kb(t, loc_names(t, hits), allow_new, query))
 
 
 @router.callback_query(StateFilter(WhSt), WhCb.filter(F.a == "p"))
@@ -423,7 +426,7 @@ async def _pick(target: Message, t: Dict[str, str], state: FSMContext, warehouse
     elif flow == FLOW_DEL:
         await state.update_data(act={"kind": "del", "name": product.name}, view="item")
         await state.set_state(WhSt.confirm)
-        await _show(target, t["wh_del_confirm2"].format(name=escape(product.name)),
+        await _show(target, t["wh_del_confirm2"].format(name=pn(t, product.name)),
                     kb.confirm_kb(t, t["wh_btn_yes_delete"]), edit)
     else:
         await _start_item(target, t, state, product, edit)
@@ -439,7 +442,7 @@ async def _start_item(target: Message, t: Dict[str, str], state: FSMContext, pro
     if flow == FLOW_OUT and _available(data, cur) <= 0:
         await state.set_state(WhSt.search)
         await state.update_data(view="pick")
-        await _show(target, t["wh_out_zero"].format(name=escape(product.name), unit=escape(product.unit),
+        await _show(target, t["wh_out_zero"].format(name=pn(t, product.name), unit=pu(t, product.unit),
                                                    stock=_n(max(_available(data, cur), 0))),
                     kb.zero_stock_kb(t, to_inflow=not data.get("lite")), edit)
         return
@@ -452,9 +455,9 @@ async def _start_item(target: Message, t: Dict[str, str], state: FSMContext, pro
 async def _show_mode(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
     cur = (await state.get_data())["cur"]
     await state.set_state(WhSt.mode)
-    await _show(target, t["wh_mode_prompt"].format(name=escape(cur["name"]), pack=_n(cur["pack"]),
-                                                   unit=escape(cur["unit"])),
-                kb.mode_kb(t, _n(cur["pack"]), cur["unit"]), edit)
+    await _show(target, t["wh_mode_prompt"].format(name=pn(t, cur["name"]), pack=_n(cur["pack"]),
+                                                   unit=pu(t, cur["unit"])),
+                kb.mode_kb(t, _n(cur["pack"]), localize_unit(cur["unit"], _lang(t))), edit)
 
 
 BOX_UNITS = ("упак", "уп", "кор", "коробка", "каробка", "пачка", "karobka", "quti", "pack", "box")
@@ -465,13 +468,13 @@ def _qty_tip(t: Dict[str, str], cur: Dict[str, Any]) -> str:
     unit = str(cur.get("unit") or "").strip().lower().rstrip(".")
     pack = float(cur.get("pack") or 1)
     if cur.get("mode") == "pack":
-        return t["wh_qty_tip_pack_mode"].format(pack=_n(pack), unit=escape(cur["unit"]), total=_n(2 * pack))
+        return t["wh_qty_tip_pack_mode"].format(pack=_n(pack), unit=pu(t, cur["unit"]), total=_n(2 * pack))
     if unit in BOX_UNITS:
         return t["wh_qty_tip_box"]
     if unit in ("шт", "dona", "штук"):
         example = pack if pack > 1 else 200
         return t["wh_qty_tip_pcs"].format(pack=_n(example), total=_n(2 * example))
-    return t["wh_qty_tip_other"].format(unit=escape(cur["unit"]))
+    return t["wh_qty_tip_other"].format(unit=pu(t, cur["unit"]))
 
 
 async def _ask_qty(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:
@@ -483,10 +486,10 @@ async def _ask_qty(target: Message, t: Dict[str, str], state: FSMContext, edit: 
     taken = sum(it["qty"] for it in data.get("cart", []) if it["name"] == cur["name"]) \
         if data.get("flow") == FLOW_OUT else 0.0
     key = "wh_qty_prompt_out" if data.get("flow") == FLOW_OUT else "wh_qty_prompt_in"
-    text = t[key].format(name=escape(cur["name"]), stock=_n(cur["stock"] - taken), unit=escape(unit),
-                         base_unit=escape(cur["unit"]), tip=_qty_tip(t, cur))
+    text = t[key].format(name=pn(t, cur["name"]), stock=_n(cur["stock"] - taken), unit=pu(t, unit),
+                         base_unit=pu(t, cur["unit"]), tip=_qty_tip(t, cur))
     if data.get("flow") == FLOW_IN:
-        text += "\n" + t["wh_pack_now"].format(pack=_n(cur.get("pack") or 1), unit=escape(cur["unit"]))
+        text += "\n" + t["wh_pack_now"].format(pack=_n(cur.get("pack") or 1), unit=pu(t, cur["unit"]))
         await _show(target, text, kb.qty_in_kb(t, _n(cur.get("pack") or 1)), edit)
         return
     await _show(target, text, kb.cancel_kb(t), edit)
@@ -526,11 +529,11 @@ async def enter_qty(message: Message, t: Dict[str, str], state: FSMContext,
         # omborda bunchalik yo'q: "borini chiqim qilish" yoki "boshqa son"
         await state.set_state(WhSt.over)
         if avail <= 0:
-            await message.answer(t["wh_out_zero"].format(name=escape(cur["name"]), unit=escape(cur["unit"]),
+            await message.answer(t["wh_out_zero"].format(name=pn(t, cur["name"]), unit=pu(t, cur["unit"]),
                                                          stock=_n(0)), reply_markup=kb.zero_stock_kb(t, to_inflow=not data.get("lite")))
             return
-        await message.answer(t["wh_out_over"].format(avail=_n(avail), qty=_n(value), unit=escape(cur["unit"]),
-                                                     name=escape(cur["name"])),
+        await message.answer(t["wh_out_over"].format(avail=_n(avail), qty=_n(value), unit=pu(t, cur["unit"]),
+                                                     name=pn(t, cur["name"])),
                              reply_markup=kb.over_stock_kb(t, _n(avail), cur["unit"]))
         return
     cur["qty"] = value
@@ -552,7 +555,7 @@ async def _ask_price(target: Message, t: Dict[str, str], state: FSMContext, ware
     await state.update_data(cur=cur)
     await state.set_state(WhSt.price)
     unit = t["wh_unit_box"] if cur.get("mode") == "pack" else cur["unit"]
-    await _show(target, t["wh_price_prompt"].format(unit=escape(unit)),
+    await _show(target, t["wh_price_prompt"].format(unit=pu(t, unit)),
                 kb.price_kb(t, _n(last) if last else None), edit)
 
 
@@ -757,6 +760,25 @@ async def save_cart(callback: CallbackQuery, t: Dict[str, str], user: User, stat
     if data.get("saving"):
         await callback.answer()
         return
+    if flow == FLOW_OUT:
+        # ❌ yozishdan oldin YANGI (keshsiz) qoldiq: Sheets da qo'lda o'zgargan bo'lsa ham manfiy bo'lmasin
+        try:
+            fresh = {p.name: p for p in await warehouse.catalog(force=True)}
+        except Exception:
+            logger.exception("Katalogni o'qib bo'lmadi")
+            await callback.answer(t["error"], show_alert=True)
+            return
+        need: Dict[str, float] = {}
+        for it in cart:
+            need[it["name"]] = need.get(it["name"], 0.0) + float(it["qty"])
+        for name, qty in need.items():
+            prod = fresh.get(name)
+            if prod is not None and qty > prod.stock + 1e-9:
+                await callback.answer()
+                await callback.message.answer(t["neg_stock_block"].format(
+                    product=pn(t, name), stock=_n(max(prod.stock, 0)), unit=pu(t, prod.unit), qty=_n(qty)),
+                    reply_markup=kb.cart_kb(t, True))
+                return
     await state.update_data(saving=True)            # ikki marta bosilsa ikki marta yozilmasin
     await callback.answer("⏳")
     try:
@@ -806,7 +828,7 @@ async def _send_low_alert(bot: Bot, repo: UserRepository, user: User, low: List[
     for u in recipients.values():
         tt = get_texts(u.lang)
         lines = [tt["wh_low_title"], ""] + [
-            tt["wh_low_line"].format(name=escape(p.name), stock=_n(p.stock), unit=escape(p.unit),
+            tt["wh_low_line"].format(name=pn(tt, p.name), stock=_n(p.stock), unit=pu(tt, p.unit),
                                      min=_n(p.min_stock)) for p in low]
         try:
             await bot.send_message(u.id, "\n".join(lines))
@@ -1218,7 +1240,7 @@ async def pick_unpriced(callback: CallbackQuery, callback_data: WhCb, t: Dict[st
     await state.set_state(WhSt.unp_price)
     await callback.answer()
     await _show(callback.message, t["wh_unpriced_prompt"].format(
-        name=escape(r["name"]), date=r["day"], qty=_n(r["qty"]), unit=escape(r["unit"]),
+        name=pn(t, r["name"]), date=r["day"], qty=_n(r["qty"]), unit=pu(t, r["unit"]),
         supplier=escape(r["sup"] or "—")), kb.unpriced_price_kb(t, _n(last) if last else None), True)
 
 
@@ -1239,7 +1261,7 @@ async def _save_unpriced(target: Message, t: Dict[str, str], state: FSMContext, 
         await target.answer(t["wh_save_error"])
         return
     await _resolve_unpriced(warehouse, r)
-    await target.answer(t["wh_unpriced_saved"].format(name=escape(r["name"]), price=_n(price), qty=_n(r["qty"]),
+    await target.answer(t["wh_unpriced_saved"].format(name=pn(t, r["name"]), price=_n(price), qty=_n(r["qty"]),
                                                       total=_n(total)))
     await _show_unpriced(target, t, state, warehouse, edit=False)
 
@@ -1623,7 +1645,7 @@ def _available(data: Dict[str, Any], cur: Dict[str, Any]) -> float:
 def _number_error(t: Dict[str, str], raw: str, value: Optional[float], field: str, unit: str = "") -> Optional[str]:
     """Son kutilganda: nima xato bo'lgani va nima qilish kerakligi (aniq misollar bilan). Xato yo'q — None.
     field: qty | price | pack | min (min uchun 0 ham mumkin)."""
-    example = t[f"wh_ex_{field}"].format(unit=escape(unit) or "")
+    example = t[f"wh_ex_{field}"].format(unit=pu(t, unit) or "")
     if value is None:
         return t["wh_err_not_number"].format(raw=escape(str(raw)[:30]), example=example)
     if field == "min_req" and value <= 0:
@@ -1728,12 +1750,15 @@ async def _show_edit_card(target: Message, t: Dict[str, str], state: FSMContext,
     await state.set_state(WhSt.ed_card)
     await state.update_data(ed_name=product.name, rn={"old": product.name}, view="item")
     price = _n(product.avg_price) if product.avg_price else "—"
-    text = t["wh_ed_card"].format(name=escape(product.name), unit=escape(product.unit),
+    shown = pn(t, product.name)
+    if shown != escape(product.name):
+        shown += f" <i>({escape(product.name)})</i>"          # jadvaldagi asl (kanonik) nom
+    text = t["wh_ed_card"].format(name=shown, unit=pu(t, product.unit),
                                   cat=escape(cat_label(product.category, _lang(t)) if product.category else "—"),
                                   min=_n(product.min_stock), stock=_n(product.stock), pack=_n(product.pack),
                                   price=price)
     can_continue = data.get("cont_flow") if data.get("last_np") == product.name else None
-    await _show(target, text, kb.edit_kb(t, can_continue, pack=_n(product.pack), unit=product.unit, price=price,
+    await _show(target, text, kb.edit_kb(t, can_continue, pack=_n(product.pack), unit=localize_unit(product.unit, _lang(t)), price=price,
                                          stock=_n(product.stock)), edit)
 
 
@@ -1764,7 +1789,7 @@ async def edit_field(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, 
     if callback_data.k == "pack":
         await state.set_state(WhSt.ed_pack)
         await _show(callback.message, _pack_prompt(t, product.unit) + "\n\n" + t["wh_pack_now"].format(
-            pack=_n(product.pack), unit=escape(product.unit)), kb.pack_kb(t, "epk"), True)
+            pack=_n(product.pack), unit=pu(t, product.unit)), kb.pack_kb(t, "epk"), True)
         return
     if callback_data.k == "price":
         await _ask_edit_price(callback.message, t, state, product, edit=True, warehouse=warehouse)
@@ -1780,7 +1805,7 @@ async def edit_field(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, 
         units = await warehouse.units()
         await state.update_data(ed_units=units)
         await state.set_state(WhSt.ed_unit)
-        await _show(callback.message, t["wh_ed_unit_prompt"].format(name=escape(name), unit=escape(product.unit)),
+        await _show(callback.message, t["wh_ed_unit_prompt"].format(name=escape(name), unit=pu(t, product.unit)),
                     kb.pick_kb(t, units, "eu", current=product.unit), True)
     elif callback_data.k == "cat":
         cats = await warehouse.all_categories()
@@ -1794,7 +1819,7 @@ async def edit_field(callback: CallbackQuery, callback_data: WhCb, t: Dict[str, 
         await state.set_state(WhSt.ed_min)
         sug = await _norm_suggestion(state, warehouse, product.unit, product.category)
         prompt = _norm_prompt(t, name, product.unit) + "\n\n" + t["wh_ed_min_current"].format(
-            min=_n(product.min_stock), unit=escape(product.unit))
+            min=_n(product.min_stock), unit=pu(t, product.unit))
         await _show(callback.message, prompt, kb.norm_kb(t, _n(sug) if sug else None, product.unit), True)
 
 
@@ -1890,7 +1915,7 @@ async def np_min_suggested(callback: CallbackQuery, t: Dict[str, str], state: FS
 
 # ---------------- Мин. норматив: tushuntirish va eslab qolish ----------------
 def _norm_prompt(t: Dict[str, str], name: str, unit: str) -> str:
-    return t["wh_norm_prompt"].format(name=escape(name), unit=escape(unit)) + "\n\n" + t["wh_norm_why"]
+    return t["wh_norm_prompt"].format(name=escape(name), unit=pu(t, unit)) + "\n\n" + t["wh_norm_why"]
 
 
 async def _norm_suggestion(state: FSMContext, warehouse: Optional[WarehouseService], unit: str,
@@ -1933,10 +1958,10 @@ def unpriced_list_text(t: Dict[str, str], items: List[Dict[str, Any]], today, li
     lines = [t["wh_unpriced_title2"].format(count=len(items))]
     if fresh:
         lines += ["", t["wh_unp_today"].format(n=len(fresh))]
-        lines += [f"• {escape(it['name'])} — {_n(it['qty'])} {escape(it['unit'])}" for it in fresh[:limit]]
+        lines += [f"• {pn(t, it['name'])} — {_n(it['qty'])} {pu(t, it['unit'])}" for it in fresh[:limit]]
     if late:
         lines += ["", t["wh_unp_late"].format(n=len(late))]
-        lines += [t["wh_unp_late_line"].format(name=escape(it["name"]), qty=_n(it["qty"]), unit=escape(it["unit"]),
+        lines += [t["wh_unp_late_line"].format(name=pn(t, it["name"]), qty=_n(it["qty"]), unit=pu(t, it["unit"]),
                                                date=it["day"], days=it["late"]) for it in late[:limit]]
     lines += ["", t["wh_unp_hint"]]
     return "\n".join(lines)
@@ -1995,8 +2020,8 @@ async def _seq_show(target: Message, t: Dict[str, str], state: FSMContext, wareh
     await state.set_state(WhSt.seq_price)
     await state.update_data(seq_i=i, unp_cur=it, unp_last=last)
     late = t["wh_seq_late"].format(days=it["late"]) if it.get("late") else ""
-    text = t["wh_seq_prompt"].format(i=i + 1, n=len(items), name=escape(it["name"]), qty=_n(it["qty"]),
-                                     unit=escape(it["unit"]), date=it["day"], late=late)
+    text = t["wh_seq_prompt"].format(i=i + 1, n=len(items), name=pn(t, it["name"]), qty=_n(it["qty"]),
+                                     unit=pu(t, it["unit"]), date=it["day"], late=late)
     await _show(target, text, kb.seq_kb(t, _n(last) if last else None), edit)
 
 
@@ -2039,7 +2064,7 @@ async def _seq_save(target: Message, t: Dict[str, str], state: FSMContext, wareh
         await target.answer(t["wh_save_error"])
         return
     await _resolve_unpriced(warehouse, it)
-    await target.answer(t["wh_unpriced_saved"].format(name=escape(it["name"]), price=_n(price), qty=_n(it["qty"]),
+    await target.answer(t["wh_unpriced_saved"].format(name=pn(t, it["name"]), price=_n(price), qty=_n(it["qty"]),
                                                       total=_n(total)))
     await _seq_show(target, t, state, warehouse, i + 1, edit=False)
 
@@ -2177,8 +2202,8 @@ async def kirim_change_pack(callback: CallbackQuery, t: Dict[str, str], state: F
     await callback.answer()
     await state.set_state(WhSt.kir_pack)
     await state.update_data(kp_val=None)
-    await _show(callback.message, t["wh_kp_prompt"].format(name=escape(cur["name"]), pack=_n(cur.get("pack") or 1),
-                                                           unit=escape(cur["unit"])) + "\n\n" + t["wh_pack_why"],
+    await _show(callback.message, t["wh_kp_prompt"].format(name=pn(t, cur["name"]), pack=_n(cur.get("pack") or 1),
+                                                           unit=pu(t, cur["unit"])) + "\n\n" + t["wh_pack_why"],
                 kb.pack_kb(t, "kpk"), True)
 
 
@@ -2186,8 +2211,8 @@ async def _kirim_pack_scope(target: Message, t: Dict[str, str], state: FSMContex
                             edit: bool) -> None:
     cur = (await state.get_data()).get("cur") or {}
     await state.update_data(kp_val=value)
-    await _show(target, t["wh_kp_scope"].format(name=escape(cur.get("name", "")), pack=_n(value),
-                                                unit=escape(cur.get("unit", ""))), kb.pack_scope_kb(t), edit)
+    await _show(target, t["wh_kp_scope"].format(name=pn(t, cur.get("name", "")), pack=_n(value),
+                                                unit=pu(t, cur.get("unit", ""))), kb.pack_scope_kb(t), edit)
 
 
 @router.callback_query(WhSt.kir_pack, WhCb.filter(F.a == "kpk"))
@@ -2245,7 +2270,7 @@ async def _ask_edit_price(target: Message, t: Dict[str, str], state: FSMContext,
             last = await warehouse.last_price(product.name)
         except Exception:
             logger.warning("Oxirgi narxni o'qib bo'lmadi", exc_info=True)
-    await _show(target, t["wh_setprice_prompt"].format(name=escape(product.name), unit=escape(product.unit),
+    await _show(target, t["wh_setprice_prompt"].format(name=pn(t, product.name), unit=pu(t, product.unit),
                                                        price=current, last=_n(last) if last else "—"),
                 kb.cancel_kb(t), edit)
 
@@ -2286,8 +2311,8 @@ async def edit_price_text(message: Message, t: Dict[str, str], state: FSMContext
 async def _ask_adj(target: Message, t: Dict[str, str], state: FSMContext, product: Product, edit: bool) -> None:
     await state.set_state(WhSt.ed_adj)
     await state.update_data(ed_name=product.name)
-    await _show(target, t["wh_adj_prompt"].format(name=escape(product.name), stock=_n(product.stock),
-                                                  unit=escape(product.unit)), kb.cancel_kb(t), edit)
+    await _show(target, t["wh_adj_prompt"].format(name=pn(t, product.name), stock=_n(product.stock),
+                                                  unit=pu(t, product.unit)), kb.cancel_kb(t), edit)
 
 
 @router.message(WhSt.ed_adj, F.text)
@@ -2316,7 +2341,8 @@ async def adjust_text(message: Message, t: Dict[str, str], state: FSMContext,
         await message.answer(t["wh_not_in_catalog"])
         return
     if product.stock + value < -1e-9:
-        await message.answer(t["wh_adj_negative"].format(stock=_n(product.stock), unit=escape(product.unit)),
+        await message.answer(t["neg_stock_block"].format(product=pn(t, product.name), stock=_n(max(product.stock, 0)),
+                                                         unit=pu(t, product.unit), qty=_n(abs(value))),
                              reply_markup=kb.cancel_kb(t))
         return
     try:
@@ -2339,8 +2365,8 @@ async def adjust_text(message: Message, t: Dict[str, str], state: FSMContext,
         after = None
     new_stock = after.stock if after is not None else product.stock + value
     delta = ("+" if value > 0 else "−") + _n(abs(value))
-    await message.answer(t["wh_adj_done"].format(name=escape(product.name), old=_n(product.stock), new=_n(new_stock),
-                                                 unit=escape(product.unit), delta=delta, sheet=escape(sheet),
+    await message.answer(t["wh_adj_done"].format(name=pn(t, product.name), old=_n(product.stock), new=_n(new_stock),
+                                                 unit=pu(t, product.unit), delta=delta, sheet=escape(sheet),
                                                  note=escape(note)))
     await _show_edit_card(message, t, state, warehouse, product.name, edit=False)
 
@@ -2352,8 +2378,9 @@ async def _krm_products(warehouse: WarehouseService, size: str, force: bool = Fa
 
 
 def _krm_labels(t: Dict[str, str], items: List[Product], size: str) -> List[str]:
-    return [t["wh_krm_color_btn"].format(color=kromka.color_of(p.name) or "—", size=size, stock=_n(p.stock),
-                                         unit=p.unit) for p in items]
+    lang = _lang(t)
+    return [t["wh_krm_color_btn"].format(color=localize_product_name(kromka.color_of(p.name), lang) or "—", size=size,
+                                         stock=_n(p.stock), unit=localize_unit(p.unit, lang)) for p in items]
 
 
 async def _krm_sizes(target: Message, t: Dict[str, str], state: FSMContext, edit: bool) -> None:

@@ -177,7 +177,7 @@ async def pick_row(callback: CallbackQuery, callback_data: HiCb, t: Dict[str, st
     await callback.answer()
     r = rows[callback_data.i]
     await state.update_data(hi_sel=r)
-    cur = "сум" if t.get("lang_code") == "ru" else "so'm"
+    cur = t["es_cur"]
     if kind == "in":
         text = t["hi_card_in"].format(row=r["row"], date=r["date"], name=escape(r["name"]), qty=_n(r["qty"]),
                                       unit=escape(r["unit"]), party=escape(r["party"] or "—"),
@@ -204,7 +204,9 @@ async def _deliver(target: Message, t: Dict[str, str], state: FSMContext, ctx: C
         await target.answer(d.card, reply_markup=confirm_kb(t, d.id))
         return
     err = str(res.get("error") or "")
-    if "insufficient" in err:
+    if res.get("message"):
+        await target.answer(res["message"])
+    elif "insufficient" in err:
         await target.answer(t["ai_fail_stock"].format(stock=_n(res.get("stock")), unit=""))
     elif "not found" in err or "moved" in err:
         await target.answer(t["ai_fail_moved"])

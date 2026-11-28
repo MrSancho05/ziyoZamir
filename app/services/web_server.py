@@ -241,7 +241,7 @@ class DashboardService:
             labels = [f"{k.day:02d}.{k.month:02d} {weekday_short(lang, k.weekday())}" for k in order]
 
         # kategoriya va eng ko'p sarflangan tovarlar
-        other = "Прочее" if lang == "ru" else "Boshqa"
+        other = "Прочее" if lang == "ru" else ("Бошқа" if lang == "cyrl" else "Boshqa")
         cats: Dict[str, float] = {}
         items: Dict[str, List[float]] = {}
         names: Dict[str, str] = {}
@@ -334,7 +334,7 @@ def create_app(service: DashboardService, authorize: Authorizer) -> web.Applicat
             return web.json_response({"ok": False, "error": "bad_request"}, status=400)
         season = season if season in SEASONS else WINTER
         offset = max(-MAX_BACK, min(0, offset))
-        lang = q.get("lang", "uz") if q.get("lang") in ("uz", "ru") else "uz"
+        lang = q.get("lang", "uz") if q.get("lang") in ("uz", "ru", "cyrl") else "uz"
         started = time.perf_counter()
         data = await service.raw(tf, season, offset)
         payload = service.render(data, lang, offset)

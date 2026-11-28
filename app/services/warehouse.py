@@ -61,6 +61,10 @@ ADJ_IN_NOTE = "Корректировка остатка (+)"
 ADJ_OUT_NOTE = "Корректировка остатка (-)"
 ROUND_MARK = "=ROUND("
 KROMKA_MARKER = "zz_kromka_category_v1"
+# Google Sheets da qo'lda kiritishni ham cheklash (Data Validation, strict)
+STOCK_DV_MSG = "Ошибка! Остаток на складе не может быть отрицательным (меньше 0)!"
+OUTFLOW_DV_MSG = "Ошибка! Недостаточно товара на складе — остаток не может уйти в минус (меньше 0)!"
+INFLOW_DV_MSG = "Ошибка! Нельзя уменьшить приход — остаток на складе не может уйти в минус (меньше 0)!"
 
 
 # ---------------- yordamchilar ----------------
@@ -1103,6 +1107,97 @@ class WarehouseService:
                 done.append(f"{title}: {needles[0]} ROUND ({n})")
         return done
 
+    # ---------- ❌ qoldiq manfiy bo'lmasin: Google Sheets ning o'zida (qo'lda tahrirlash ham rad etiladi) ----------
+    @staticmethod
+    def _dv_rule(formula: str, message: str) -> Dict[str, Any]:
+        return {"condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": formula}]},
+                "inputMessage": message, "strict": True, "showCustomUi": True}
+
+    def _protect_sync(self) -> List[str]:
+        """«Остатки и Расходы» → Остаток на складе: =E2>=0; «Расход» → Количество: >0 va jami qoldiq >= 0.
+        Har ishga tushganda qayta qo'yiladi (idempotent). Bot yozuvlari o'zining keshsiz tekshiruvidan o'tadi."""
+        done: List[str] = []
+        ss = self._sheets.spreadsheet
+        inv = self._ws(self.inventory_tab)
+        top = inv.get_values("A1:Z5")
+        h = _header_index(top, "Наименование товара", "наименование")
+        cols = self._inv_cols(top[h] if top else [])
+        if cols["stock"] is not None:
+            c = cols["stock"]
+            letter = _col_letter(c)
+            req = {"setDataValidation": {
+                "range": {"sheetId": inv.id, "startRowIndex": h + 1, "endRowIndex": max(inv.row_count, h + 2),
+                          "startColumnIndex": c, "endColumnIndex": c + 1},
+                "rule": self._dv_rule(f"={letter}{h + 2}>=0", STOCK_DV_MSG)}}
+            try:
+                ss.batch_update({"requests": [req]})
+                done.append(f"{self.inventory_tab}: {letter} >= 0")
+            except Exception as e:
+                if "typed column" not in str(e):
+                    logger.warning("«%s» qoldiq ustuniga Data Validation qo'yib bo'lmadi", self.inventory_tab,
+                                   exc_info=True)
+                else:
+                    # Table3 da «Остаток на складе» — turli (DOUBLE) ustun: Google validatsiyaga ruxsat bermaydi.
+                    # Formulali ustun: qo'lda o'zgartirishda ogohlantiruvchi himoya (warningOnly) qo'yiladi
+                    done += self._protect_formula_col(inv, h, c, STOCK_DV_MSG)
+        try:
+            out, inf = self._ws(self.outflow_tab), self._ws(self.inflow_tab)
+        except WorksheetNotFound:
+            return done
+        otop, itop = out.get_values("A1:Z5"), inf.get_values("A1:Z5")
+        oh = _header_index(otop, "Наименование товара", "наименование")
+        ih = _header_index(itop, "Наименование товара", "наименование")
+        oc = self._entry_cols("out", otop[oh] if otop else [])
+        ic = self._inflow_cols(itop[ih] if itop else [])
+        if None in (oc["qty"], oc["name"], ic["qty"], ic["name"]):
+            return done
+        q, n = _col_letter(oc["qty"]), _col_letter(oc["name"])
+        iq, ib = _col_letter(ic["qty"]), _col_letter(ic["name"])
+        r = oh + 2
+        it, ot = self.inflow_tab.replace("'", "''"), self.outflow_tab.replace("'", "''")
+        formula = (f"=AND(ISNUMBER({q}{r}), {q}{r}>0, SUMIFS('{it}'!${iq}:${iq},'{it}'!${ib}:${ib},{n}{r})"
+                   f"-SUMIFS('{ot}'!${q}:${q},'{ot}'!${n}:${n},{n}{r})>=0)")
+        req = {"setDataValidation": {
+            "range": {"sheetId": out.id, "startRowIndex": oh + 1, "endRowIndex": max(out.row_count, oh + 2),
+                      "startColumnIndex": oc["qty"], "endColumnIndex": oc["qty"] + 1},
+            "rule": self._dv_rule(formula, OUTFLOW_DV_MSG)}}
+        try:
+            ss.batch_update({"requests": [req]})
+            done.append(f"{self.outflow_tab}: {q} (qoldiq >= 0)")
+        except Exception:
+            logger.warning("«%s» miqdor ustuniga Data Validation qo'yib bo'lmadi", self.outflow_tab, exc_info=True)
+        # «Приход» miqdori: kirimni qo'lda kamaytirish ham qoldiqni manfiy qilmasin
+        ri = ih + 2
+        iformula = (f"=AND(ISNUMBER({iq}{ri}), {iq}{ri}>0, SUMIFS('{it}'!${iq}:${iq},'{it}'!${ib}:${ib},{ib}{ri})"
+                    f"-SUMIFS('{ot}'!${q}:${q},'{ot}'!${n}:${n},{ib}{ri})>=0)")
+        req = {"setDataValidation": {
+            "range": {"sheetId": inf.id, "startRowIndex": ih + 1, "endRowIndex": max(inf.row_count, ih + 2),
+                      "startColumnIndex": ic["qty"], "endColumnIndex": ic["qty"] + 1},
+            "rule": self._dv_rule(iformula, INFLOW_DV_MSG)}}
+        try:
+            ss.batch_update({"requests": [req]})
+            done.append(f"{self.inflow_tab}: {iq} (qoldiq >= 0)")
+        except Exception:
+            logger.warning("«%s» miqdor ustuniga Data Validation qo'yib bo'lmadi", self.inflow_tab, exc_info=True)
+        return done
+
+    def _protect_formula_col(self, ws, h: int, col: int, message: str) -> List[str]:
+        """Bir marta: ustunga ogohlantiruvchi himoya (description bo'yicha takrorlanmaydi)."""
+        ss = self._sheets.spreadsheet
+        try:
+            meta = ss.fetch_sheet_metadata(params={"fields": "sheets(properties(sheetId),protectedRanges(description))"})
+            for sh in meta.get("sheets", []):
+                if sh.get("properties", {}).get("sheetId") == ws.id and any(
+                        p.get("description") == message for p in sh.get("protectedRanges", []) or []):
+                    return []
+            ss.batch_update({"requests": [{"addProtectedRange": {"protectedRange": {
+                "range": {"sheetId": ws.id, "startRowIndex": h + 1, "startColumnIndex": col, "endColumnIndex": col + 1},
+                "description": message, "warningOnly": True}}}]})
+            return [f"{ws.title}: {_col_letter(col)} (ogohlantiruvchi himoya)"]
+        except Exception:
+            logger.warning("«%s» ustuniga himoya qo'yib bo'lmadi", ws.title, exc_info=True)
+            return []
+
     # ---------- 🎞 Кромка ПВХ: mavjud «Кромка ...» mahsulotlari yangi kategoriyaga (bir marta) ----------
     def _kromka_migrate_sync(self) -> int:
         meta = self._sheets.spreadsheet.fetch_sheet_metadata(params={"fields": "developerMetadata(metadataKey)"})
@@ -1135,6 +1230,12 @@ class WarehouseService:
             done += await self._sheets.run(self._round_sync)
         except Exception:
             logger.warning("Summalarni ROUND ga o'rab bo'lmadi", exc_info=True)
+        try:
+            protected = await self._sheets.run(self._protect_sync)          # har safar (idempotent) — faqat log
+            if protected:
+                logger.info("Manfiy qoldiq himoyasi (Data Validation): %s", "; ".join(protected))
+        except Exception:
+            logger.warning("Manfiy qoldiq himoyasini qo'yib bo'lmadi", exc_info=True)
         try:
             moved = await self._sheets.run(self._kromka_migrate_sync)
             if moved:
